@@ -155,6 +155,21 @@ def _extract_memories_used(event) -> list[dict]:
     return memories
 
 
+def _get_static_memories() -> list[dict]:
+    """Fetch static (user profile) memories that are injected at conversation start."""
+    try:
+        result = project.beta.memory_stores.search_memories(
+            name=MEMORY_STORE_NAME,
+            scope=MEMORY_SCOPE,
+        )
+        return [
+            {"id": m.memory_item.memory_id, "content": m.memory_item.content}
+            for m in result.memories
+        ]
+    except Exception:
+        return []
+
+
 def _friendly_blob_title(url: str) -> str:
     """Convert a blob URL like .../wh-kb-docs/wh-services-cancer-services.md to a nice title."""
     try:
@@ -263,10 +278,33 @@ async def send_message(chat_id: str, req: MessageRequest):
                             full_text = text
                             yield json.dumps({"type": "delta", "content": text})
                     elif event.type in ("response.completed", "response.done", "response.incomplete"):
+                        # Debug: log output item types
+                        response_obj = event.response if hasattr(event, "response") else event
+                        output_items = getattr(response_obj, "output", []) or []
+                        for oi in output_items:
+                            oi_type = getattr(oi, "type", "unknown")
+                            if oi_type == "memory_search_call":
+                                status = getattr(oi, "status", "")
+                                results = getattr(oi, "results", None)
+                                print(f"[STREAM]   memory_search_call status={status}, results={results}")
+                                print(f"[STREAM]   memory_search_call attrs={vars(oi) if hasattr(oi, '__dict__') else oi}")
+
                         # Extract citation annotations from the completed/incomplete response
                         citations = _extract_citations(event)
                         memories_used = _extract_memories_used(event)
-                        print(f"[STREAM] {event.type}: {len(citations)} citations, {len(memories_used)} memories used")
+
+                        # If the agent triggered a memory_search_call but results weren't
+                        # populated yet (status=in_progress), fetch static memories that
+                        # were injected at conversation start. Only do this if the agent
+                        # actually invoked the memory tool (not for every response).
+                        has_memory_call = any(
+                            getattr(oi, "type", "") == "memory_search_call"
+                            for oi in output_items
+                        )
+                        if not memories_used and has_memory_call:
+                            memories_used = _get_static_memories()
+
+                        print(f"[STREAM] {event.type}: {len(citations)} citations, {len(memories_used)} memories used (memory_call={has_memory_call})")
                         if citations:
                             yield json.dumps({"type": "citations", "citations": citations})
                         if memories_used:
