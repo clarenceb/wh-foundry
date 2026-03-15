@@ -1,6 +1,0 @@
-azure-identity>=1.25
-azure-storage-blob>=12.28
-beautifulsoup4>=4.14
-markdownify>=1.2
-playwright>=1.58
-pyyaml>=6.0
