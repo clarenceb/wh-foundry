@@ -12,3 +12,7 @@ hooks:
       continueOnError: false
 
 services: {}
+  # web:
+  #   project: ./web
+  #   language: ts
+  #   host: appservice

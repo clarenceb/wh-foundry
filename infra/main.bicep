@@ -118,6 +118,18 @@ module userStorageRole './modules/storage-role.bicep' = if (!empty(principalId))
   }
 }
 
+// Role assignments: Current user → Storage (Blob Delegator — required for SAS URL generation)
+module userStorageDelegator './modules/storage-role.bicep' = if (!empty(principalId)) {
+  name: 'user-storage-blob-delegator'
+  scope: rg
+  params: {
+    storageAccountName: storage.outputs.name
+    principalId: principalId
+    principalType: 'User'
+    blobRole: 'delegator'
+  }
+}
+
 // Role assignments: Current user → AI Services (Cognitive Services User)
 module userAiRole './modules/ai-services-role.bicep' = if (!empty(principalId)) {
   name: 'user-ai-user'
@@ -126,6 +138,30 @@ module userAiRole './modules/ai-services-role.bicep' = if (!empty(principalId)) 
     aiServicesAccountName: aiServices.outputs.accountName
     principalId: principalId
     principalType: 'User'
+  }
+}
+
+// Role assignments: AI Services (self) → AI Services (Cognitive Services User)
+// Required for the memory store to call the embedding model on the same account
+module aiServicesSelfRole './modules/ai-services-role.bicep' = {
+  name: 'ai-services-self-cognitive-user'
+  scope: rg
+  params: {
+    aiServicesAccountName: aiServices.outputs.accountName
+    principalId: aiServices.outputs.identityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Role assignments: Project managed identity → AI Services (Azure AI User)
+// Required for memory store to authenticate and call models (chat + embedding)
+module projectAiRole './modules/ai-services-role.bicep' = {
+  name: 'project-ai-user'
+  scope: rg
+  params: {
+    aiServicesAccountName: aiServices.outputs.accountName
+    principalId: aiServices.outputs.projectIdentityPrincipalId
+    principalType: 'ServicePrincipal'
   }
 }
 

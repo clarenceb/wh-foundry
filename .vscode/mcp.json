@@ -1,0 +1,11 @@
+{
+  "servers": {
+    // "drawio": {
+    //   "command": "${userHome}/.deno/bin/deno",
+    // "args": ["run", "--allow-net", "--allow-read", "--allow-env", "${userHome}/dev/projects/drawio-mcp-server/src/index.ts"]
+    // // }
+    //   "drawio": {
+    //     "url": "http://localhost:8080/mcp"
+    //   }
+  }
+}

@@ -35,6 +35,84 @@ uv pip install -e .
 
 # Install Chromium for Playwright
 playwright install chromium
+
+# Install frontend dependencies
+cd web && npm install && cd ..
+```
+
+### Configure `.env`
+
+Copy the sample and fill in your values:
+
+```bash
+cp .env.sample .env
+```
+
+Edit `.env` with your Foundry project details:
+
+```dotenv
+# Foundry project endpoint
+# Format: https://<resource_name>.services.ai.azure.com/api/projects/<project_name>
+PROJECT_ENDPOINT=https://foundrydemoscbx.services.ai.azure.com/api/projects/mydemos
+
+# Name of the agent created in Foundry
+AGENT_NAME=wh-patient-helper
+
+# Memory store config
+MEMORY_STORE_NAME=MemoryStore-xxxxxxxxxxxxxx
+MEMORY_SCOPE={tenantId}_{objectId}
+
+# Storage account (for SAS-signed source document URLs)
+STORAGE_ACCOUNT_NAME=whkbdocs
+```
+
+#### Setting `MEMORY_SCOPE`
+
+The agent's memory tool uses `{{$userId}}` as the scope, which resolves to `{tenantId}_{objectId}` from the request auth token. The backend needs the same scope to list and clear memories.
+
+To get your scope value:
+
+```bash
+# Get your tenant ID
+TENANT_ID=$(az account show --query tenantId -o tsv)
+
+# Get your object ID
+OBJECT_ID=$(az ad signed-in-user show --query id -o tsv)
+
+# Combine them
+echo "${TENANT_ID}_${OBJECT_ID}"
+```
+
+Set the output as `MEMORY_SCOPE` in `.env`:
+
+```dotenv
+MEMORY_SCOPE=10000072-868a-4a35-a837-af0477f1d90c_47a15bf4-d265-44e2-bb1b-6e58670304a3
+```
+
+#### Setting `MEMORY_STORE_NAME`
+
+Find your memory store name in the Foundry portal under your agent's memory tool configuration, or run:
+
+```bash
+source .venv/bin/activate
+python -c "
+import os
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+from dotenv import load_dotenv
+load_dotenv()
+project = AIProjectClient(endpoint=os.environ['PROJECT_ENDPOINT'], credential=DefaultAzureCredential())
+for s in project.beta.memory_stores.list():
+    print(f'  {s.name} — {s.description}')
+"
+```
+
+### Run the web app
+
+```bash
+./start.sh                  # Full chat app at http://localhost:5173/
+./start.sh --mode=widget    # WH landing page + chat bubble at /widget
+./start.sh --mode=embed     # Embeddable chat at /embed
 ```
 
 ## Azure infrastructure provisioning
@@ -145,8 +223,20 @@ Or reset and run from the Azure portal under **Azure AI Search > Indexers > wh-k
 ### 5. Test the knowledge base
 
 Once indexing completes, test queries in the Azure portal:
+
 - **Azure AI Search > Indexes > wh-kb-docs-index > Search explorer**
 - **Microsoft Foundry > Project > Knowledge bases > wh-kb-docs**
+
+### 6. Console chat (CLI)
+
+For a quick demo without the web app, use the standalone console chat:
+
+```bash
+source .venv/bin/activate
+python chat.py
+```
+
+This connects directly to the Foundry agent and lets you type questions in the terminal. Type `q`, `quit`, or `bye` to exit.
 
 ## Project structure
 
@@ -154,27 +244,32 @@ Once indexing completes, test queries in the Azure portal:
 wh-foundry/
 ├── azure.yaml                      # Azure Developer CLI project config
 ├── pyproject.toml                  # Python project config and dependencies
+├── .env.sample                     # Environment variable template
+├── start.sh                        # Start both API + frontend dev servers
+├── chat.py                         # CLI chat demo (standalone)
 ├── scrape-config.yaml              # Scraper configuration (URLs, storage, selectors)
 ├── scrape_pages.py                 # Web scraper script
 ├── upload_docs.py                  # Blob storage upload script
-├── infra/
-│   ├── main.bicep                  # Main Bicep template (subscription-scoped)
-│   ├── main.parameters.json        # Parameter file for azd
-│   ├── abbreviations.json          # Resource name abbreviations
-│   ├── modules/
-│   │   ├── storage.bicep            # Storage account + container
-│   │   ├── search.bicep             # Azure AI Search service
-│   │   ├── ai-services.bicep        # AI Services account + Foundry project
-│   │   ├── model-deployments.bicep  # OpenAI model deployments
-│   │   ├── storage-role.bicep       # Storage blob role assignments
-│   │   └── ai-services-role.bicep   # AI Services role assignments
-│   ├── search-config/
-│   │   ├── index.json               # Search index definition
-│   │   ├── datasource.json          # Blob data source definition
-│   │   ├── skillset.json            # Chunking + embedding skillset
-│   │   └── indexer.json             # Indexer definition
-│   └── scripts/
-│       └── setup-search.sh          # Post-provision: deploy search configs
+├── web/
+│   ├── api/
+│   │   └── server.py               # FastAPI backend (SSE streaming, memory, SAS URLs)
+│   └── src/
+│       ├── api.ts                   # Frontend API client
+│       ├── App.tsx                  # React Router (/, /widget, /embed)
+│       ├── stores/
+│       │   ├── chatStore.ts         # Zustand chat store
+│       │   └── memoryStore.ts       # Zustand memory store
+│       ├── components/
+│       │   ├── ChatPanel.tsx        # Chat UI with streaming + citations
+│       │   ├── Sidebar.tsx          # Chat history sidebar
+│       │   ├── ChatWidget.tsx       # Floating chat bubble
+│       │   ├── MemoryPanel.tsx      # Memory viewer + clear scope
+│       │   └── SourceModal.tsx      # SAS-signed document viewer
+│       └── pages/
+│           ├── FullAppPage.tsx      # / — full chat app
+│           ├── WidgetPage.tsx       # /widget — WH landing + chat bubble
+│           └── EmbedPage.tsx        # /embed — standalone embeddable chat
+├── infra/                           # Bicep templates + azd config
 ├── wh-kb-docs-md/                   # Scraped Markdown output (local)
 ├── wh-kb-docs/                      # Original PDF files (reference only)
 └── wh-images/                       # Supporting images
@@ -211,4 +306,13 @@ Ensure you are logged in via Azure CLI:
 az login
 ```
 
-The upload scripts use `DefaultAzureCredential`, which picks up your Azure CLI session. Your account needs **Storage Blob Data Contributor** on the `whkbdocs` storage account.
+The upload scripts use `DefaultAzureCredential`, which picks up your Azure CLI session. Your account needs **Storage Blob Data Contributor** and **Storage Blob Delegator** on the `whkbdocs` storage account.
+
+## Future enhancements
+
+- **User authentication** — Add Microsoft Entra ID (AAD) login to the web app so each user gets their own memory scope automatically via `{{$userId}}` (tenant ID + object ID from the auth token). Currently the scope is hardcoded in `.env`.
+- **Deploy to Azure App Service** — Package the FastAPI backend and React frontend for deployment to Azure App Service (or Container Apps). The `start.sh` script currently runs both locally; a production deployment would use a reverse proxy (e.g. nginx) or serve the Vite build as static files from FastAPI.
+- **Persistent chat history** — Chat history is currently in-memory on the backend. Add Cosmos DB or Azure Table Storage for persistence across restarts.
+- **Multi-user support** — With AAD login, each user would have isolated conversations and memory scopes.
+- **Admin panel** — Add an admin view to manage the knowledge base (trigger re-indexing, view indexer status, upload new documents).
+- **Analytics** — Track common questions, response quality, and user satisfaction for continuous improvement.

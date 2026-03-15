@@ -39,6 +39,9 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-04-01-previ
   sku: {
     name: 'S0'
   }
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     #disable-next-line BCP037
     aiServicesConnections: !empty(searchServiceId) ? {
@@ -54,3 +57,5 @@ output accountId string = aiServicesAccount.id
 output accountName string = aiServicesAccount.name
 output endpoint string = 'https://${aiServicesAccount.name}.openai.azure.com'
 output projectName string = project.name
+output identityPrincipalId string = aiServicesAccount.identity.principalId
+output projectIdentityPrincipalId string = project.identity.principalId

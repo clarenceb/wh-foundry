@@ -1,0 +1,44 @@
+:root {
+  /* WH Brand Palette — derived from westernhealth.org.au */
+  --wh-teal: #007A7A;
+  --wh-teal-dark: #005C5C;
+  --wh-teal-darker: #004040;
+  --wh-teal-light: #00A3A3;
+  --wh-teal-pale: #E6F5F5;
+  --wh-white: #FFFFFF;
+  --wh-off-white: #F7FAFA;
+  --wh-gray-100: #F0F4F4;
+  --wh-gray-200: #D9E2E2;
+  --wh-gray-300: #B0C0C0;
+  --wh-gray-500: #6B8080;
+  --wh-gray-700: #3A4F4F;
+  --wh-gray-900: #1A2B2B;
+  --wh-red: #D32F2F;
+  --wh-green: #2E7D32;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Fira Code', 'Cascadia Code', monospace;
+  --sidebar-width: 280px;
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  font-family: var(--font-sans);
+  color: var(--wh-gray-900);
+  background: var(--wh-off-white);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--wh-teal); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button { cursor: pointer; font-family: var(--font-sans); }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--wh-gray-300); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--wh-gray-500); }
