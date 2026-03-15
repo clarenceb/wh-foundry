@@ -4,9 +4,20 @@ import styles from './Sidebar.module.css';
 
 interface Props {
   onOpenMemory: () => void;
+  language: string;
+  onLanguageChange: (lang: string) => void;
 }
 
-export default function Sidebar({ onOpenMemory }: Props) {
+const LANGUAGES = [
+  { code: 'en', label: '🇬🇧 English' },
+  { code: 'vi', label: '🇻🇳 Vietnamese' },
+  { code: 'el', label: '🇬🇷 Greek' },
+  { code: 'zh', label: '🇨🇳 Mandarin' },
+  { code: 'es', label: '🇪🇸 Spanish' },
+  { code: 'it', label: '🇮🇹 Italian' },
+];
+
+export default function Sidebar({ onOpenMemory, language, onLanguageChange }: Props) {
   const { chats, activeChatId, newChat, setActiveChat, deleteChat } = useChatStore();
 
   return (
@@ -45,6 +56,16 @@ export default function Sidebar({ onOpenMemory }: Props) {
         <button className={styles.memoryBtn} onClick={onOpenMemory}>
           🧠 Memories
         </button>
+        <select
+          className={styles.langSelect}
+          value={language}
+          onChange={(e) => onLanguageChange(e.target.value)}
+          title="Voice language"
+        >
+          {LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>{l.label}</option>
+          ))}
+        </select>
         <Link to="/widget" className={styles.widgetLink}>
           🌐 Widget Mode
         </Link>

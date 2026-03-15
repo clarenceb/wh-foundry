@@ -114,6 +114,27 @@
   background: rgba(255,255,255,0.08);
 }
 
+.langSelect {
+  width: 100%;
+  padding: 8px 10px;
+  margin-top: 6px;
+  background: rgba(255,255,255,0.06);
+  color: var(--wh-gray-200);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.langSelect:hover {
+  background: rgba(255,255,255,0.1);
+}
+.langSelect option {
+  background: var(--wh-teal-darker);
+  color: var(--wh-white);
+}
+
 .widgetLink {
   display: block;
   width: 100%;

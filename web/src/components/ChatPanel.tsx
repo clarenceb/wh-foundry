@@ -4,18 +4,20 @@ import { useChatStore } from '../stores/chatStore';
 import { createChat, streamMessage } from '../api';
 import type { Citation } from '../api';
 import SourceModal from './SourceModal';
+import VoiceControls from './VoiceControls';
 import styles from './ChatPanel.module.css';
 
 interface Props {
   chatId?: string;
   compact?: boolean;
+  language?: string;
 }
 
-/** Strip Foundry citation markers like 【7:2†source】 */
+/** Strip Foundry citation markers like 【...】 */
 const stripCitations = (text: string) =>
   text.replace(/【[^】]*】/g, '');
 
-export default function ChatPanel({ chatId: chatIdProp, compact }: Props) {
+export default function ChatPanel({ chatId: chatIdProp, compact, language = 'en' }: Props) {
   const { activeChatId, newChat, addMessage, appendToMessage, setCitations } = useChatStore();
   const chats = useChatStore((s) => s.chats);
   const resolvedChatId = chatIdProp || activeChatId;
@@ -167,6 +169,9 @@ export default function ChatPanel({ chatId: chatIdProp, compact }: Props) {
       </div>
 
       <div className={styles.inputBar}>
+        {!compact && (
+          <VoiceControls chatId={resolvedChatId ?? null} language={language} />
+        )}
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}

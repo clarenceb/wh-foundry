@@ -48,6 +48,10 @@ chats: dict[str, dict] = {}
 # ── FastAPI app ────────────────────────────────────────────────────
 app = FastAPI(title="Western Health Chat API")
 
+# Mount voice WebSocket router
+from web.api.voice_ws import router as voice_router
+app.include_router(voice_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

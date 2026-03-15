@@ -29,6 +29,7 @@ interface ChatState {
   appendToMessage: (chatId: string, messageId: string, chunk: string) => void;
   setCitations: (chatId: string, messageId: string, citations: Citation[]) => void;
   setMemoriesUsed: (chatId: string, messageId: string, memories: MemoryUsed[]) => void;
+  replaceMessageContent: (chatId: string, messageId: string, content: string) => void;
   getActiveChat: () => Chat | undefined;
 }
 
@@ -106,6 +107,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...c,
           messages: c.messages.map((m) =>
             m.id === messageId ? { ...m, memoriesUsed } : m
+          ),
+        };
+      }),
+    })),
+
+  replaceMessageContent: (chatId, messageId, content) =>
+    set((s) => ({
+      chats: s.chats.map((c) => {
+        if (c.id !== chatId) return c;
+        return {
+          ...c,
+          messages: c.messages.map((m) =>
+            m.id === messageId ? { ...m, content } : m
           ),
         };
       }),

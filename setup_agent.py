@@ -48,6 +48,7 @@ load_dotenv()
 
 PROJECT_ENDPOINT = os.environ["PROJECT_ENDPOINT"]
 AGENT_NAME = os.environ.get("AGENT_NAME", "wh-patient-helper")
+VOICE_AGENT_NAME = os.environ.get("VOICE_AGENT_NAME", "wh-patient-helper-voice")
 MEMORY_STORE_NAME = os.environ.get("MEMORY_STORE_NAME", "wh-patient-memory")
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "gpt-5.1")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
@@ -81,6 +82,18 @@ MEMORY_USER_PROFILE_DETAILS = (
     "answer style preferences (concise, detailed, dot points), "
     "medical context (upcoming procedures, conditions). "
     "Avoid: sensitive personal data, financial info, credentials."
+)
+
+VOICE_AGENT_INSTRUCTIONS = (
+    "You are a friendly, conversational voice assistant for Western Health "
+    "patients and visitors. Speak naturally in complete sentences as if "
+    "talking face-to-face. Never use bullet points, numbered lists, markdown "
+    "formatting, headings, or special characters. These sound unnatural when "
+    "spoken aloud. Keep responses concise and warm. "
+    "When the user speaks a language other than English, respond in that same language. "
+    "Supported languages: English, Vietnamese, Greek, Mandarin Chinese, Spanish, Italian. "
+    "Use available tools and knowledge bases only. "
+    "Do not answer questions not related to Western Hospital and healthcare."
 )
 
 
@@ -135,11 +148,8 @@ def delete_memory_store():
 
 # ── Agent ──────────────────────────────────────────────────────────
 
-def create_agent(memory_store_name: str):
-    """Create or update the agent with all tools."""
-    print(f"Creating/updating agent: {AGENT_NAME}")
-
-    # Build tools list
+def _build_tools(memory_store_name: str) -> list:
+    """Build the shared tools list for both text and voice agents."""
     tools = []
 
     # 1. Knowledge base (MCP connection to AI Search)
@@ -165,6 +175,15 @@ def create_agent(memory_store_name: str):
     # 3. Web search (for supplementary info)
     tools.append({"type": "web_search_preview"})
 
+    return tools
+
+
+def create_agent(memory_store_name: str):
+    """Create or update the text agent with all tools."""
+    print(f"Creating/updating agent: {AGENT_NAME}")
+
+    tools = _build_tools(memory_store_name)
+
     # Create the agent version
     agent = project.agents.create_version(
         agent_name=AGENT_NAME,
@@ -181,6 +200,27 @@ def create_agent(memory_store_name: str):
     print(f"    - Knowledge base: {KB_CONNECTION_ID}")
     print(f"    - Memory store: {memory_store_name} (delay: {MEMORY_UPDATE_DELAY}s)")
     print(f"    - Web search: enabled")
+    return agent
+
+
+def create_voice_agent(memory_store_name: str):
+    """Create or update the voice agent (same tools, voice-optimised instructions)."""
+    print(f"Creating/updating voice agent: {VOICE_AGENT_NAME}")
+
+    tools = _build_tools(memory_store_name)
+
+    agent = project.agents.create_version(
+        agent_name=VOICE_AGENT_NAME,
+        definition=PromptAgentDefinition(
+            model=AGENT_MODEL,
+            instructions=VOICE_AGENT_INSTRUCTIONS,
+            tools=tools,
+        ),
+    )
+
+    print(f"✓ Voice agent created: {agent.name} (version: {agent.version})")
+    print(f"  Model: {AGENT_MODEL}")
+    print(f"  Instructions: voice-optimised (no formatting, natural prose)")
     return agent
 
 
@@ -208,11 +248,15 @@ def main():
     store_name = create_memory_store()
     print()
 
-    # 2. Create agent
+    # 2. Create text agent
     create_agent(store_name)
     print()
 
-    print("Done! Agent is ready.")
+    # 3. Create voice agent
+    create_voice_agent(store_name)
+    print()
+
+    print("Done! Both agents are ready.")
     print()
     print("Next steps:")
     print("  1. Ensure the knowledge base is connected in the Foundry portal")
