@@ -107,6 +107,25 @@ for s in project.beta.memory_stores.list():
 "
 ```
 
+### Setup Foundry agent and memory store
+
+After infrastructure is provisioned and the knowledge base is connected in the Foundry portal, run:
+
+```bash
+source .venv/bin/activate
+python setup_agent.py
+```
+
+This creates (or verifies):
+- **Memory store** — configured with chat/embedding models, user profile extraction
+- **Agent** (`wh-patient-helper`) — with knowledge base (MCP), memory search, and web search tools
+
+To delete and recreate everything:
+
+```bash
+python setup_agent.py --reset
+```
+
 ### Run the web app
 
 ```bash

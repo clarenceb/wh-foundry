@@ -133,6 +133,28 @@ def _extract_citations(event) -> list[dict]:
     return citations
 
 
+def _extract_memories_used(event) -> list[dict]:
+    """Extract memories that were used in the response from memory_search_call items."""
+    memories = []
+    try:
+        response = event.response if hasattr(event, "response") else event
+        output_items = getattr(response, "output", []) or []
+        for item in output_items:
+            item_type = getattr(item, "type", "")
+            if item_type == "memory_search_call":
+                results = getattr(item, "results", []) or []
+                for r in results:
+                    mem_item = getattr(r, "memory_item", None)
+                    if mem_item:
+                        content = getattr(mem_item, "content", "")
+                        mem_id = getattr(mem_item, "memory_id", "")
+                        if content:
+                            memories.append({"id": mem_id, "content": content})
+    except Exception:
+        pass
+    return memories
+
+
 def _friendly_blob_title(url: str) -> str:
     """Convert a blob URL like .../wh-kb-docs/wh-services-cancer-services.md to a nice title."""
     try:
@@ -234,23 +256,30 @@ async def send_message(chat_id: str, req: MessageRequest):
                         if delta:
                             full_text += delta
                             yield json.dumps({"type": "delta", "content": delta})
-                    elif event.type in ("response.completed", "response.done"):
-                        # Extract citation annotations from the completed response
+                    elif event.type == "response.output_text.done":
+                        # Some models send complete text in .done instead of deltas
+                        text = getattr(event, "text", "")
+                        if text and not full_text:
+                            full_text = text
+                            yield json.dumps({"type": "delta", "content": text})
+                    elif event.type in ("response.completed", "response.done", "response.incomplete"):
+                        # Extract citation annotations from the completed/incomplete response
                         citations = _extract_citations(event)
-                        print(f"[STREAM] {event.type}: found {len(citations)} citations")
+                        memories_used = _extract_memories_used(event)
+                        print(f"[STREAM] {event.type}: {len(citations)} citations, {len(memories_used)} memories used")
                         if citations:
                             yield json.dumps({"type": "citations", "citations": citations})
+                        if memories_used:
+                            yield json.dumps({"type": "memories_used", "memories": memories_used})
                         yield json.dumps({"type": "done"})
                     else:
-                        # Log other event types to find where citations live
+                        # Log other event types for debugging
                         print(f"[STREAM] event.type={event.type}")
 
-            # If we never got a "done" event, send one now
+            # Safety net: if stream ended without a terminal event, send done
             if full_text:
                 chat["messages"].append({"role": "assistant", "content": full_text})
-            else:
-                # Fallback: non-streaming
-                pass
+            yield json.dumps({"type": "done"})
 
         except Exception as e:
             yield json.dumps({"type": "error", "content": str(e)})

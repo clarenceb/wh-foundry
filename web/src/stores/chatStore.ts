@@ -1,11 +1,12 @@
 import { create } from 'zustand';
-import type { Citation } from '../api';
+import type { Citation, MemoryUsed } from '../api';
 
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   citations?: Citation[];
+  memoriesUsed?: MemoryUsed[];
   timestamp: number;
 }
 
@@ -27,6 +28,7 @@ interface ChatState {
   addMessage: (chatId: string, role: 'user' | 'assistant', content: string) => string;
   appendToMessage: (chatId: string, messageId: string, chunk: string) => void;
   setCitations: (chatId: string, messageId: string, citations: Citation[]) => void;
+  setMemoriesUsed: (chatId: string, messageId: string, memories: MemoryUsed[]) => void;
   getActiveChat: () => Chat | undefined;
 }
 
@@ -91,6 +93,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...c,
           messages: c.messages.map((m) =>
             m.id === messageId ? { ...m, citations } : m
+          ),
+        };
+      }),
+    })),
+
+  setMemoriesUsed: (chatId, messageId, memoriesUsed) =>
+    set((s) => ({
+      chats: s.chats.map((c) => {
+        if (c.id !== chatId) return c;
+        return {
+          ...c,
+          messages: c.messages.map((m) =>
+            m.id === messageId ? { ...m, memoriesUsed } : m
           ),
         };
       }),

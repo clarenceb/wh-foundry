@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import { useChatStore } from '../stores/chatStore';
 import { createChat, streamMessage } from '../api';
-import type { Citation } from '../api';
+import type { Citation, MemoryUsed } from '../api';
 import SourceModal from './SourceModal';
 import styles from './ChatPanel.module.css';
 
@@ -16,7 +16,7 @@ const stripCitations = (text: string) =>
   text.replace(/【[^】]*】/g, '');
 
 export default function ChatPanel({ chatId: chatIdProp, compact }: Props) {
-  const { activeChatId, newChat, addMessage, appendToMessage, setCitations } = useChatStore();
+  const { activeChatId, newChat, addMessage, appendToMessage, setCitations, setMemoriesUsed } = useChatStore();
   const chats = useChatStore((s) => s.chats);
   const resolvedChatId = chatIdProp || activeChatId;
   const chat = chats.find((c) => c.id === resolvedChatId);
@@ -24,6 +24,7 @@ export default function ChatPanel({ chatId: chatIdProp, compact }: Props) {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [expandedCitations, setExpandedCitations] = useState<Set<string>>(new Set());
+  const [expandedMemories, setExpandedMemories] = useState<Set<string>>(new Set());
   const [viewingSource, setViewingSource] = useState<Citation | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -81,8 +82,9 @@ export default function ChatPanel({ chatId: chatIdProp, compact }: Props) {
       text,
       (chunk) => appendToMessage(cid!, assistantMsgId, chunk),
       (citations: Citation[]) => setCitations(cid!, assistantMsgId, citations),
+      (memories: MemoryUsed[]) => setMemoriesUsed(cid!, assistantMsgId, memories),
       () => setStreaming(false),
-      (err) => {
+      (err: string) => {
         appendToMessage(cid!, assistantMsgId, `\n\n⚠️ Error: ${err}`);
         setStreaming(false);
       },
@@ -155,6 +157,33 @@ export default function ChatPanel({ chatId: chatIdProp, compact }: Props) {
                           📄 {c.title}
                         </a>
                       </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {/* Memories used toggle */}
+            {msg.role === 'assistant' && msg.memoriesUsed && msg.memoriesUsed.length > 0 && (
+              <div className={styles.memoriesWrapper}>
+                <button
+                  className={styles.memoriesToggle}
+                  onClick={() => {
+                    setExpandedMemories((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(msg.id)) next.delete(msg.id);
+                      else next.add(msg.id);
+                      return next;
+                    });
+                  }}
+                >
+                  {expandedMemories.has(msg.id) ? '▾ Hide memories' : '▸ Memories used'}
+                  <span className={styles.memoryCount}>({msg.memoriesUsed.length})</span>
+                </button>
+                {expandedMemories.has(msg.id) && (
+                  <ul className={styles.memoriesList}>
+                    {msg.memoriesUsed.map((m, mi) => (
+                      <li key={mi}>🧠 {m.content}</li>
                     ))}
                   </ul>
                 )}

@@ -21,9 +21,15 @@ export interface Citation {
   title: string;
 }
 
+export interface MemoryUsed {
+  id: string;
+  content: string;
+}
+
 /**
  * Send a message and stream the response via SSE.
  * Calls onDelta for each text chunk, onCitations when sources arrive,
+ * onMemoriesUsed when memories used are reported,
  * onDone when complete, onError on failure.
  */
 export async function streamMessage(
@@ -31,6 +37,7 @@ export async function streamMessage(
   message: string,
   onDelta: (text: string) => void,
   onCitations: (citations: Citation[]) => void,
+  onMemoriesUsed: (memories: MemoryUsed[]) => void,
   onDone: () => void,
   onError: (err: string) => void,
 ) {
@@ -70,6 +77,8 @@ export async function streamMessage(
               onDelta(payload.content);
             } else if (payload.type === 'citations' && payload.citations) {
               onCitations(payload.citations);
+            } else if (payload.type === 'memories_used' && payload.memories) {
+              onMemoriesUsed(payload.memories);
             } else if (payload.type === 'done') {
               onDone();
               return;
