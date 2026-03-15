@@ -20,7 +20,7 @@ export default function FullAppPage() {
           Patient Chat — powered by Microsoft Foundry
         </div>
         <div className={styles.chatArea}>
-          <ChatPanel language={language} />
+          <ChatPanel />
         </div>
       </div>
       {memoryOpen && <MemoryPanel onClose={() => setMemoryOpen(false)} />}

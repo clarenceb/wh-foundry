@@ -81,3 +81,9 @@
   background: #e53e3e;
   animation: pulse 1.2s ease-in-out infinite;
 }
+
+.statusMessage {
+  font-size: 0.82rem;
+  color: var(--wh-teal);
+  font-weight: 500;
+}

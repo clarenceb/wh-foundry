@@ -1,14 +1,16 @@
 """
 Voice WebSocket proxy — bridges browser audio to Azure Voice Live.
 
-The browser connects via WebSocket, sends PCM16 audio chunks (24kHz mono),
-and receives audio responses + transcripts from the Foundry voice agent.
+Uses the azure-ai-voicelive SDK (v1.1.0) with the correct async API:
+  - connect() → VoiceLiveConnection (async context manager)
+  - connection.send(ClientEvent) to send audio/config
+  - connection.recv() → ServerEvent to receive events
+  - connection.recv_bytes() → bytes for raw audio
 
-Protocol:
+Protocol (browser ↔ this server):
   Browser → Server:
-    - Binary frames: raw PCM16 audio from mic
+    - Binary frames: raw PCM16 audio from mic (24kHz mono)
     - Text frames: JSON control messages ({"type": "stop"})
-
   Server → Browser:
     - Binary frames: PCM16 audio for playback
     - Text frames: JSON transcript/status events
@@ -18,7 +20,6 @@ import asyncio
 import json
 import os
 import base64
-from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
@@ -39,7 +40,7 @@ _parts = PROJECT_ENDPOINT.replace("https://", "").split("/")
 RESOURCE_NAME = _parts[0].split(".")[0]
 PROJECT_NAME = _parts[-1] if len(_parts) > 1 else "mydemos"
 
-# Voice Live endpoint (uses cognitiveservices subdomain)
+# Voice Live endpoint
 VOICELIVE_ENDPOINT = os.environ.get(
     "VOICELIVE_ENDPOINT",
     f"https://{RESOURCE_NAME}.cognitiveservices.azure.com",
@@ -68,18 +69,12 @@ def list_languages():
 
 @router.websocket("/api/voice")
 async def voice_session(ws: WebSocket, lang: str = Query("en")):
-    """
-    WebSocket endpoint for voice sessions.
-
-    Query params:
-        lang: Language code (en, vi, el, zh, es, it)
-    """
+    """WebSocket endpoint for voice sessions."""
     await ws.accept()
 
     lang_config = LANGUAGES.get(lang, LANGUAGES["en"])
     print(f"[VOICE] Session started — lang={lang}, voice={lang_config['voice']}")
 
-    # Send session info to client
     await ws.send_text(json.dumps({
         "type": "session.started",
         "language": lang,
@@ -89,90 +84,131 @@ async def voice_session(ws: WebSocket, lang: str = Query("en")):
     credential = AsyncDefaultAzureCredential()
 
     try:
-        # Import Voice Live SDK
-        from azure.ai.voicelive.aio import VoiceLiveClient
+        from azure.ai.voicelive.aio import connect
+        from azure.ai.voicelive.models import (
+            ClientEventInputAudioBufferAppend,
+            ClientEventSessionUpdate,
+            RequestSession,
+            AzureStandardVoice,
+            AzureSemanticVadMultilingual,
+            AudioNoiseReduction,
+            AudioEchoCancellation,
+            AudioInputTranscriptionOptions,
+            Modality,
+            InputAudioFormat,
+            OutputAudioFormat,
+            ServerEventType,
+        )
 
-        # Create Voice Live client with agent mode
-        client = VoiceLiveClient(
+        # Connect with agent mode via query params
+        async with connect(
             endpoint=VOICELIVE_ENDPOINT,
             credential=credential,
             api_version="2026-01-01-preview",
-        )
-
-        # Connect with agent configuration
-        async with client.connect(
-            agent_name=VOICE_AGENT_NAME,
-            project_name=PROJECT_NAME,
-            voice=lang_config["voice"],
-            input_audio_transcription={"model": "azure-speech"},
-            turn_detection={
-                "type": "azure_semantic_vad",
-                "end_of_utterance_detection": {
-                    "model": "semantic_detection_v1_multilingual"
-                },
+            # Agent mode: no model needed, agent provides it
+            query={
+                "agent_name": VOICE_AGENT_NAME,
+                "project_name": PROJECT_NAME,
             },
-            input_audio_noise_reduction={"type": "azure_deep_noise_suppression"},
-            input_audio_echo_cancellation={"type": "server_echo_cancellation"},
         ) as connection:
+
+            print(f"[VOICE] Connected to Voice Live (agent={VOICE_AGENT_NAME})")
+
+            # Configure the session
+            session_config = RequestSession(
+                modalities=[Modality.TEXT, Modality.AUDIO],
+                input_audio_format=InputAudioFormat.PCM16,
+                output_audio_format=OutputAudioFormat.PCM16,
+                voice=AzureStandardVoice(name=lang_config["voice"]),
+                turn_detection=AzureSemanticVadMultilingual(),
+                input_audio_transcription=AudioInputTranscriptionOptions(model="azure-speech"),
+                input_audio_noise_reduction=AudioNoiseReduction(type="azure_deep_noise_suppression"),
+                input_audio_echo_cancellation=AudioEchoCancellation(type="server_echo_cancellation"),
+            )
+
+            await connection.send(ClientEventSessionUpdate(session=session_config))
+            print("[VOICE] Session configured")
 
             stop_event = asyncio.Event()
 
             async def browser_to_azure():
-                """Forward mic audio from browser to Voice Live."""
+                """Forward mic audio from browser WebSocket to Voice Live."""
                 try:
                     while not stop_event.is_set():
                         data = await ws.receive()
-                        if "bytes" in data:
+                        if "bytes" in data and data["bytes"]:
                             # Raw PCM16 audio → base64 encode for SDK
                             audio_b64 = base64.b64encode(data["bytes"]).decode("utf-8")
-                            await connection.input_audio_buffer.append(audio=audio_b64)
-                        elif "text" in data:
+                            await connection.send(
+                                ClientEventInputAudioBufferAppend(audio=audio_b64)
+                            )
+                        elif "text" in data and data["text"]:
                             msg = json.loads(data["text"])
                             if msg.get("type") == "stop":
+                                print("[VOICE] Stop requested by client")
                                 stop_event.set()
                                 break
                 except (WebSocketDisconnect, RuntimeError):
                     stop_event.set()
+                except Exception as e:
+                    print(f"[VOICE] browser_to_azure error: {e}")
+                    stop_event.set()
 
             async def azure_to_browser():
-                """Forward Voice Live events to browser."""
+                """Forward Voice Live events to browser WebSocket."""
                 try:
-                    async for event in connection:
-                        if stop_event.is_set():
+                    while not stop_event.is_set():
+                        try:
+                            event = await asyncio.wait_for(connection.recv(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            continue
+                        except Exception:
                             break
 
-                        event_type = getattr(event, "type", "")
+                        event_type = event.get("type", "")
 
                         # Audio response data
                         if event_type == "response.audio.delta":
-                            delta = getattr(event, "delta", "")
+                            delta = event.get("delta", "")
                             if delta:
                                 audio_bytes = base64.b64decode(delta)
                                 await ws.send_bytes(audio_bytes)
 
                         # User speech transcript (final)
                         elif event_type == "conversation.item.input_audio_transcription.completed":
-                            transcript = getattr(event, "transcript", "")
+                            transcript = event.get("transcript", "")
                             if transcript:
+                                print(f"[VOICE] User said: {transcript[:80]}")
                                 await ws.send_text(json.dumps({
                                     "type": "transcript.final",
                                     "role": "user",
                                     "text": transcript.strip(),
                                 }))
 
-                        # Agent text response done
-                        elif event_type == "response.audio_transcript.done":
-                            transcript = getattr(event, "transcript", "")
+                        # User speech transcript (partial/delta)
+                        elif event_type == "conversation.item.input_audio_transcription.delta":
+                            transcript = event.get("delta", "")
                             if transcript:
+                                await ws.send_text(json.dumps({
+                                    "type": "transcript.partial",
+                                    "role": "user",
+                                    "text": transcript,
+                                }))
+
+                        # Agent audio transcript done
+                        elif event_type == "response.audio_transcript.done":
+                            transcript = event.get("transcript", "")
+                            if transcript:
+                                print(f"[VOICE] Agent said: {transcript[:80]}")
                                 await ws.send_text(json.dumps({
                                     "type": "response.final",
                                     "role": "assistant",
                                     "text": transcript.strip(),
                                 }))
 
-                        # Agent text response streaming
+                        # Agent audio transcript streaming
                         elif event_type == "response.audio_transcript.delta":
-                            delta = getattr(event, "delta", "")
+                            delta = event.get("delta", "")
                             if delta:
                                 await ws.send_text(json.dumps({
                                     "type": "response.delta",
@@ -182,6 +218,7 @@ async def voice_session(ws: WebSocket, lang: str = Query("en")):
 
                         # User started speaking (barge-in)
                         elif event_type == "input_audio_buffer.speech_started":
+                            print("[VOICE] Barge-in detected")
                             await ws.send_text(json.dumps({
                                 "type": "barge_in",
                             }))
@@ -192,16 +229,23 @@ async def voice_session(ws: WebSocket, lang: str = Query("en")):
                                 "type": "response.done",
                             }))
 
+                        # Session created/updated
+                        elif event_type in ("session.created", "session.updated"):
+                            print(f"[VOICE] {event_type}")
+
                         # Error
                         elif event_type == "error":
-                            error_msg = getattr(event, "error", {})
-                            print(f"[VOICE] Error: {error_msg}")
+                            error_data = event.get("error", {})
+                            print(f"[VOICE] Error: {error_data}")
                             await ws.send_text(json.dumps({
                                 "type": "error",
-                                "message": str(error_msg),
+                                "message": str(error_data),
                             }))
 
                 except (WebSocketDisconnect, RuntimeError):
+                    stop_event.set()
+                except Exception as e:
+                    print(f"[VOICE] azure_to_browser error: {e}")
                     stop_event.set()
 
             # Run both directions concurrently

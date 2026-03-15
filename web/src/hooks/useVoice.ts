@@ -17,7 +17,7 @@ interface UseVoiceOptions {
 
 interface UseVoiceReturn {
   status: VoiceStatus;
-  start: () => Promise<void>;
+  start: (overrideChatId?: string) => Promise<void>;
   stop: () => void;
   partialTranscript: string;
   error: string | null;
@@ -34,6 +34,10 @@ export function useVoice({ chatId, language }: UseVoiceOptions): UseVoiceReturn 
   const playbackNodeRef = useRef<AudioWorkletNode | null>(null);
   const assistantMsgIdRef = useRef<string | null>(null);
   const assistantTextRef = useRef('');
+  const activeChatIdRef = useRef<string | null>(chatId);
+
+  // Keep the ref in sync
+  activeChatIdRef.current = chatId;
 
   const { addMessage, replaceMessageContent } = useChatStore();
 
@@ -65,14 +69,24 @@ export function useVoice({ chatId, language }: UseVoiceOptions): UseVoiceReturn 
     setError(null);
   }, [cleanup]);
 
-  const start = useCallback(async () => {
-    if (!chatId) return;
+  const start = useCallback(async (overrideChatId?: string) => {
+    const effectiveId = overrideChatId || chatId;
+    if (!effectiveId) {
+      console.warn('[VOICE] No chatId — cannot start voice session');
+      setError('No active chat');
+      setStatus('error');
+      return;
+    }
+    // Update the ref so handleEvent uses the right chatId
+    activeChatIdRef.current = effectiveId;
+    console.log('[VOICE] Starting voice session, chatId=', effectiveId, 'lang=', language);
     setStatus('connecting');
     setError(null);
     setPartialTranscript('');
 
     try {
       // 1. Get mic permission
+      console.log('[VOICE] Requesting mic permission...');
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           sampleRate: SAMPLE_RATE,
@@ -82,14 +96,17 @@ export function useVoice({ chatId, language }: UseVoiceOptions): UseVoiceReturn 
         },
       });
       micStreamRef.current = stream;
+      console.log('[VOICE] Mic granted, sampleRate=', stream.getAudioTracks()[0]?.getSettings().sampleRate);
 
       // 2. Create AudioContext at 24kHz
       const audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
       audioCtxRef.current = audioCtx;
+      console.log('[VOICE] AudioContext created, sampleRate=', audioCtx.sampleRate);
 
       // 3. Load worklets
       await audioCtx.audioWorklet.addModule('/mic-processor.js');
       await audioCtx.audioWorklet.addModule('/playback-processor.js');
+      console.log('[VOICE] AudioWorklets loaded');
 
       // 4. Mic capture pipeline
       const micSource = audioCtx.createMediaStreamSource(stream);
@@ -104,11 +121,13 @@ export function useVoice({ chatId, language }: UseVoiceOptions): UseVoiceReturn 
 
       // 6. Open WebSocket
       const wsUrl = `${getVoiceWsUrl()}/api/voice?lang=${language}`;
+      console.log('[VOICE] Opening WebSocket:', wsUrl);
       const ws = new WebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 
       ws.onopen = () => {
+        console.log('[VOICE] WebSocket connected');
         setStatus('active');
       };
 
@@ -123,11 +142,13 @@ export function useVoice({ chatId, language }: UseVoiceOptions): UseVoiceReturn 
       ws.onmessage = (e: MessageEvent) => {
         if (e.data instanceof ArrayBuffer) {
           // Binary audio → playback worklet
+          console.log('[VOICE] Received audio chunk:', e.data.byteLength, 'bytes');
           playbackNode.port.postMessage(e.data, [e.data]);
         } else {
           // JSON text frame → transcript
           try {
             const msg = JSON.parse(e.data as string);
+            console.log('[VOICE] Received event:', msg.type, msg.text?.substring(0, 50) || '');
             handleEvent(msg);
           } catch {
             // ignore non-JSON
@@ -135,18 +156,21 @@ export function useVoice({ chatId, language }: UseVoiceOptions): UseVoiceReturn 
         }
       };
 
-      ws.onerror = () => {
+      ws.onerror = (ev) => {
+        console.error('[VOICE] WebSocket error:', ev);
         setError('Voice connection error');
         setStatus('error');
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
+        console.log('[VOICE] WebSocket closed:', ev.code, ev.reason);
         if (status !== 'idle') {
           cleanup();
           setStatus('idle');
         }
       };
     } catch (err) {
+      console.error('[VOICE] Start failed:', err);
       setError(err instanceof Error ? err.message : 'Failed to start voice');
       setStatus('error');
       cleanup();
@@ -155,36 +179,34 @@ export function useVoice({ chatId, language }: UseVoiceOptions): UseVoiceReturn 
 
   const handleEvent = useCallback(
     (msg: { type: string; role?: string; text?: string; message?: string }) => {
-      if (!chatId) return;
+      const cid = activeChatIdRef.current;
+      if (!cid) return;
 
       switch (msg.type) {
         case 'transcript.final':
-          // User's final transcript → add as user message
           setPartialTranscript('');
           if (msg.text) {
-            addMessage(chatId, 'user', msg.text);
+            addMessage(cid, 'user', msg.text);
           }
           break;
 
         case 'response.delta':
-          // Streaming assistant text
           if (msg.text) {
             assistantTextRef.current += msg.text;
             if (!assistantMsgIdRef.current) {
-              assistantMsgIdRef.current = addMessage(chatId, 'assistant', assistantTextRef.current);
+              assistantMsgIdRef.current = addMessage(cid, 'assistant', assistantTextRef.current);
             } else {
-              replaceMessageContent(chatId, assistantMsgIdRef.current, assistantTextRef.current);
+              replaceMessageContent(cid, assistantMsgIdRef.current, assistantTextRef.current);
             }
           }
           break;
 
         case 'response.final':
-          // Final assistant transcript
           if (msg.text) {
             if (assistantMsgIdRef.current) {
-              replaceMessageContent(chatId, assistantMsgIdRef.current, msg.text);
+              replaceMessageContent(cid, assistantMsgIdRef.current, msg.text);
             } else {
-              addMessage(chatId, 'assistant', msg.text);
+              addMessage(cid, 'assistant', msg.text);
             }
           }
           assistantMsgIdRef.current = null;

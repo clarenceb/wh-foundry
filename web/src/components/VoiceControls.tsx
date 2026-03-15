@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import { useVoice } from '../hooks/useVoice';
 import type { VoiceStatus } from '../hooks/useVoice';
+import { useChatStore } from '../stores/chatStore';
+import { createChat } from '../api';
 import styles from './VoiceControls.module.css';
 
 interface Props {
@@ -21,17 +24,46 @@ const STATUS_TITLES: Record<VoiceStatus, string> = {
   error: 'Voice error — click to retry',
 };
 
+const STATUS_MESSAGES: Record<VoiceStatus, string> = {
+  idle: '',
+  connecting: '🎙️ Connecting voice…',
+  active: '🎙️ Voice mode active — speak now',
+  error: '',
+};
+
 export default function VoiceControls({ chatId, language }: Props) {
+  const [overrideChatId, setOverrideChatId] = useState<string | null>(null);
+  const effectiveChatId = chatId || overrideChatId;
+
   const { status, start, stop, partialTranscript, error } = useVoice({
-    chatId,
+    chatId: effectiveChatId,
     language,
   });
 
   const handleClick = async () => {
     if (status === 'active') {
+      console.log('[VOICE UI] Stopping voice mode');
       stop();
     } else {
-      await start();
+      let cid = effectiveChatId;
+
+      // Auto-create a chat if none exists
+      if (!cid) {
+        console.log('[VOICE UI] No chat — creating one...');
+        const { newChat } = useChatStore.getState();
+        cid = newChat();
+        const serverChat = await createChat();
+        useChatStore.setState((s) => ({
+          chats: s.chats.map((c) =>
+            c.id === cid ? { ...c, serverId: serverChat.chat_id } : c
+          ),
+        }));
+        setOverrideChatId(cid);
+      }
+
+      console.log('[VOICE UI] Starting voice mode, chatId=', cid, 'lang=', language);
+      // Pass the chatId directly to start() to avoid stale closure
+      await start(cid);
     }
   };
 
@@ -54,6 +86,10 @@ export default function VoiceControls({ chatId, language }: Props) {
       </button>
 
       {status === 'active' && <div className={`${styles.statusDot} ${styles.statusActive}`} />}
+
+      {STATUS_MESSAGES[status] && (
+        <span className={styles.statusMessage}>{STATUS_MESSAGES[status]}</span>
+      )}
 
       {partialTranscript && (
         <span className={styles.partialTranscript}>{partialTranscript}</span>
