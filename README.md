@@ -36,6 +36,9 @@ uv pip install -e .
 # Install Chromium for Playwright
 playwright install chromium
 
+# Install system dependencies required by Chromium (Linux only)
+playwright install-deps
+
 # Install frontend dependencies
 cd web && npm install && cd ..
 ```
