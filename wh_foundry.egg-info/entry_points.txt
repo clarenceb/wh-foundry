@@ -1,0 +1,3 @@
+[console_scripts]
+scrape-pages = scrape_pages:main
+upload-docs = upload_docs:main

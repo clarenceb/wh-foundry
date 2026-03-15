@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+scrape_pages.py
+upload_docs.py
+wh_foundry.egg-info/PKG-INFO
+wh_foundry.egg-info/SOURCES.txt
+wh_foundry.egg-info/dependency_links.txt
+wh_foundry.egg-info/entry_points.txt
+wh_foundry.egg-info/requires.txt
+wh_foundry.egg-info/top_level.txt

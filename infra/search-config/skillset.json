@@ -1,0 +1,78 @@
+{
+  "name": "wh-kb-docs-skillset",
+  "description": "Skillset for knowledge source 'wh-kb-docs'",
+  "skills": [
+    {
+      "@odata.type": "#Microsoft.Skills.Text.SplitSkill",
+      "name": "SplitSkill",
+      "description": "Split document content into chunks",
+      "context": "/document",
+      "defaultLanguageCode": "en",
+      "textSplitMode": "pages",
+      "maximumPageLength": 2000,
+      "pageOverlapLength": 200,
+      "maximumPagesToTake": 0,
+      "unit": "characters",
+      "inputs": [
+        {
+          "name": "text",
+          "source": "/document/content"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "textItems",
+          "targetName": "pages"
+        }
+      ]
+    },
+    {
+      "@odata.type": "#Microsoft.Skills.Text.AzureOpenAIEmbeddingSkill",
+      "name": "AzureOpenAIEmbeddingSkill",
+      "description": "Generate embeddings",
+      "context": "/document/pages/*",
+      "resourceUri": "{{AI_SERVICES_ENDPOINT}}",
+      "deploymentId": "text-embedding-3-small",
+      "dimensions": 1536,
+      "modelName": "text-embedding-3-small",
+      "inputs": [
+        {
+          "name": "text",
+          "source": "/document/pages/*"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "embedding",
+          "targetName": "text_vector"
+        }
+      ]
+    }
+  ],
+  "indexProjections": {
+    "selectors": [
+      {
+        "targetIndexName": "wh-kb-docs-index",
+        "parentKeyFieldName": "snippet_parent_id",
+        "sourceContext": "/document/pages/*",
+        "mappings": [
+          {
+            "name": "snippet_vector",
+            "source": "/document/pages/*/text_vector"
+          },
+          {
+            "name": "snippet",
+            "source": "/document/pages/*"
+          },
+          {
+            "name": "blob_url",
+            "source": "/document/blob_url"
+          }
+        ]
+      }
+    ],
+    "parameters": {
+      "projectionMode": "skipIndexingParentDocuments"
+    }
+  }
+}

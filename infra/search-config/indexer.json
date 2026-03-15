@@ -1,0 +1,26 @@
+{
+  "name": "wh-kb-docs-indexer",
+  "description": "Indexer for knowledge source 'wh-kb-docs'",
+  "dataSourceName": "wh-kb-docs-datasource",
+  "skillsetName": "wh-kb-docs-skillset",
+  "targetIndexName": "wh-kb-docs-index",
+  "disabled": false,
+  "parameters": {
+    "maxFailedItems": -1,
+    "maxFailedItemsPerBatch": -1,
+    "configuration": {
+      "dataToExtract": "contentAndMetadata",
+      "parsingMode": "default"
+    }
+  },
+  "fieldMappings": [
+    {
+      "sourceFieldName": "metadata_storage_path",
+      "targetFieldName": "blob_url"
+    }
+  ],
+  "outputFieldMappings": [],
+  "schedule": {
+    "interval": "P1D"
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "name": "wh-kb-docs-index",
+  "fields": [
+    {
+      "name": "uid",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": false,
+      "retrievable": true,
+      "stored": true,
+      "sortable": true,
+      "facetable": false,
+      "key": true,
+      "analyzer": "keyword"
+    },
+    {
+      "name": "snippet_parent_id",
+      "type": "Edm.String",
+      "searchable": false,
+      "filterable": true,
+      "retrievable": true,
+      "stored": true,
+      "sortable": false,
+      "facetable": false
+    },
+    {
+      "name": "blob_url",
+      "type": "Edm.String",
+      "searchable": false,
+      "filterable": true,
+      "retrievable": true,
+      "stored": true,
+      "sortable": false,
+      "facetable": false
+    },
+    {
+      "name": "snippet",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": false,
+      "retrievable": true,
+      "stored": true,
+      "sortable": false,
+      "facetable": false
+    },
+    {
+      "name": "snippet_vector",
+      "type": "Collection(Edm.Single)",
+      "searchable": true,
+      "filterable": false,
+      "retrievable": true,
+      "stored": true,
+      "sortable": false,
+      "facetable": false,
+      "dimensions": 1536,
+      "vectorSearchProfile": "wh-kb-docs-vector-search-profile"
+    }
+  ],
+  "semantic": {
+    "defaultConfiguration": "wh-kb-docs-semantic-configuration",
+    "configurations": [
+      {
+        "name": "wh-kb-docs-semantic-configuration",
+        "prioritizedFields": {
+          "prioritizedContentFields": [
+            { "fieldName": "snippet" }
+          ]
+        }
+      }
+    ]
+  },
+  "vectorSearch": {
+    "algorithms": [
+      {
+        "name": "wh-kb-docs-vector-search-algorithm",
+        "kind": "hnsw",
+        "hnswParameters": {
+          "metric": "cosine",
+          "m": 4,
+          "efConstruction": 400,
+          "efSearch": 500
+        }
+      }
+    ],
+    "profiles": [
+      {
+        "name": "wh-kb-docs-vector-search-profile",
+        "algorithm": "wh-kb-docs-vector-search-algorithm",
+        "vectorizer": "wh-kb-docs-vectorizer",
+        "compression": "wh-kb-docs-vector-search-scalar-quantization"
+      }
+    ],
+    "vectorizers": [
+      {
+        "name": "wh-kb-docs-vectorizer",
+        "kind": "azureOpenAI",
+        "azureOpenAIParameters": {
+          "resourceUri": "{{AI_SERVICES_ENDPOINT}}",
+          "deploymentId": "text-embedding-3-small",
+          "modelName": "text-embedding-3-small"
+        }
+      }
+    ],
+    "compressions": [
+      {
+        "name": "wh-kb-docs-vector-search-scalar-quantization",
+        "kind": "scalarQuantization",
+        "scalarQuantizationParameters": {
+          "quantizedDataType": "int8"
+        },
+        "rescoringOptions": {
+          "enableRescoring": true,
+          "defaultOversampling": 4,
+          "rescoreStorageMethod": "preserveOriginals"
+        }
+      }
+    ]
+  }
+}

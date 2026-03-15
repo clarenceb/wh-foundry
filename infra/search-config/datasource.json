@@ -1,0 +1,11 @@
+{
+  "name": "wh-kb-docs-datasource",
+  "description": "Data source for knowledge source 'wh-kb-docs'",
+  "type": "azureblob",
+  "credentials": {
+    "connectionString": "ResourceId=/subscriptions/{{SUBSCRIPTION_ID}}/resourceGroups/{{RESOURCE_GROUP}}/providers/Microsoft.Storage/storageAccounts/{{STORAGE_ACCOUNT_NAME}};"
+  },
+  "container": {
+    "name": "{{STORAGE_CONTAINER_NAME}}"
+  }
+}

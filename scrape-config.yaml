@@ -1,0 +1,138 @@
+# Western Health web page scraper configuration
+#
+# Add page URLs to scrape below.
+# Each entry needs a url. An optional 'name' overrides the output filename.
+# If no name is given, one is derived from the URL path.
+
+# Azure Blob Storage settings
+storage:
+  account_name: whkbdocs
+  container_name: wh-kb-docs
+
+# Output directory for local markdown files
+output_dir: wh-kb-docs-md
+
+# Selectors to strip from the page (CSS selectors)
+# These are removed before extracting content
+strip_selectors:
+  # -- Generic --
+  - "nav"
+  - "header"
+  - "footer"
+  - "script"
+  - "style"
+  - "noscript"
+  - "iframe"
+  - "svg"
+  - "img"
+  - "picture"
+  - "video"
+  - "audio"
+  - "form"
+
+  # -- Western Health specific --
+  - ".site-header"
+  - ".site-footer"
+  - ".breadcrumb"
+  - ".breadcrumbs"
+  - ".cookie-banner"
+  - ".consent-banner"
+
+  # Skip to main content / important update banners
+  - ".skip-link"
+  - "[class*='skip-to']"
+  - ".alert-banner"
+  - ".important-update"
+
+  # Sidebars and in-page navigation
+  - ".side-nav"
+  - ".sidenav"
+  - ".sidebar"
+  - "#sidebar"
+  - "[class*='on-this-page']"
+  - "[class*='onthispage']"
+  - ".table-of-contents"
+  - ".toc"
+
+  # Related pages / services available here sidebar
+  - "[class*='related-pages']"
+  - "[class*='related_pages']"
+  - "[class*='services-available']"
+
+  # Social sharing / back to top / feedback
+  - ".social-share"
+  - "[class*='social-media']"
+  - ".back-to-top"
+  - "[class*='back-to-top']"
+  - "[class*='was-this-page']"
+  - "[class*='page-helpful']"
+  - "[class*='feedback']"
+  - "[class*='like-dislike']"
+
+  # Newsletter / subscribe / donate callouts
+  - "[class*='newsletter']"
+  - "[class*='subscribe']"
+  - "[class*='mailing-list']"
+  - "[class*='mailing_list']"
+  - "[class*='sign-up']"
+
+  # Emergency callout banner at bottom
+  - "[class*='emergency-callout']"
+  - "[class*='emergency-banner']"
+
+  # Acknowledgement of Country (footer boilerplate)
+  - "[class*='acknowledgement']"
+  - "[class*='acknowledgment']"
+
+  # Navigation menus
+  - ".nav-menu"
+  - ".navigation"
+  - ".menu"
+  - "[role='navigation']"
+
+# CSS selector for the main content area (tries each in order, first match wins)
+# If none match, falls back to <body>
+content_selectors:
+  - "main"
+  - "article"
+  - "[role='main']"
+  - ".main-content"
+  - "#main-content"
+  - ".content"
+  - "#content"
+  - ".page-content"
+
+# Pages to scrape
+pages:
+# -- Patients and visitors --
+- url: https://westernhealth.org.au/patients-and-visitors/patient-transport-services
+  name: wh-patients-and-visitors-patient-transport-services
+- url: https://westernhealth.org.au/patients-and-visitors/what-bring-hospital
+  name: wh-patients-and-visitors-what-to-bring
+- url: https://westernhealth.org.au/patients-and-visitors/your-referral
+  name: wh-patients-and-visitors-your-referral
+- url: https://westernhealth.org.au/patients-and-visitors/patient-fees-and-billing
+  name: wh-patients-and-visitors-patient-fees-and-billing
+- url: https://westernhealth.org.au/patients-and-visitors/accessing-your-medical-records
+  name: wh-patients-and-visitors-accessing-medical-records
+
+# -- Services --
+- url: https://westernhealth.org.au/service/cancer-services
+  name: wh-services-cancer-services
+- url: https://westernhealth.org.au/service/maternity-services
+  name: wh-services-maternal-services
+- url: https://westernhealth.org.au/service/newborn-services
+  name: wh-services-newborn-services
+- url: https://westernhealth.org.au/service/paediatrics
+  name: wh-services-paediatrics
+- url: https://westernhealth.org.au/service/womens-health
+  name: wh-services-women-and-childrens
+
+# -- Locations (tabs: Overview, Emergency, Services, etc.) --
+- url: https://westernhealth.org.au/locations
+  name: wh-locations
+- url: https://westernhealth.org.au/location/footscray-hospital
+  name: wh-location-footscray-hospital
+- url: https://westernhealth.org.au/location/sunshine-hospital
+  name: wh-location-sunshine-hospital
+
