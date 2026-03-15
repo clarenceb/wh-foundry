@@ -6,5 +6,5 @@
 * How should I prepare for my TKR surgery tomorrow?
 * Show me a comparison table of services at Sunshine and Footscray hospitals
 * Show me answers in both English (first) and Greek (follows after the English text is completed)
-* Remember that I live in Sunshine
+* I live in Sunshine.  How can I get to Footscray hospital by train?
 * What is the address of my local hospital?

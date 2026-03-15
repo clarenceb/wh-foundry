@@ -155,9 +155,11 @@ def create_agent(memory_store_name: str):
     tools.append(kb_tool)
 
     # 2. Memory search tool
+    # Use the static MEMORY_SCOPE value (tid_oid) rather than {{$userId}} template,
+    # which may not resolve correctly in all authentication contexts.
     memory_tool = MemorySearchPreviewTool(
         memory_store_name=memory_store_name,
-        scope="{{$userId}}",
+        scope=os.environ.get("MEMORY_SCOPE", "demo_user"),
         update_delay=MEMORY_UPDATE_DELAY,
     )
     tools.append(memory_tool)
