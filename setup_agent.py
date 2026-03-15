@@ -229,13 +229,18 @@ def create_voice_agent(memory_store_name: str):
 def main():
     parser = argparse.ArgumentParser(description="Setup Foundry agent and memory store")
     parser.add_argument("--reset", action="store_true", help="Delete and recreate everything")
+    parser.add_argument("--only", choices=["text", "voice"], default=None,
+                        help="Create only the text or voice agent (default: both)")
     args = parser.parse_args()
 
     print("=" * 50)
     print("WH Foundry Agent Setup")
     print(f"  Project: {PROJECT_ENDPOINT}")
-    print(f"  Agent:   {AGENT_NAME}")
-    print(f"  Model:   {AGENT_MODEL}")
+    if args.only != "voice":
+        print(f"  Text agent:  {AGENT_NAME}")
+    if args.only != "text":
+        print(f"  Voice agent: {VOICE_AGENT_NAME}")
+    print(f"  Model:       {AGENT_MODEL}")
     print("=" * 50)
     print()
 
@@ -244,19 +249,21 @@ def main():
         delete_memory_store()
         print()
 
-    # 1. Create memory store
+    # 1. Create memory store (always needed)
     store_name = create_memory_store()
     print()
 
     # 2. Create text agent
-    create_agent(store_name)
-    print()
+    if args.only in (None, "text"):
+        create_agent(store_name)
+        print()
 
     # 3. Create voice agent
-    create_voice_agent(store_name)
-    print()
+    if args.only in (None, "voice"):
+        create_voice_agent(store_name)
+        print()
 
-    print("Done! Both agents are ready.")
+    print("Done!")
     print()
     print("Next steps:")
     print("  1. Ensure the knowledge base is connected in the Foundry portal")
