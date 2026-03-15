@@ -53,6 +53,8 @@
   background: var(--wh-gray-100);
   color: var(--wh-gray-900);
   border-bottom-left-radius: 4px;
+  max-width: 90%;
+  overflow-x: auto;
 }
 
 .assistantBubble p {
@@ -80,6 +82,33 @@
 }
 .assistantBubble a {
   color: var(--wh-teal);
+}
+
+/* Markdown tables */
+.assistantBubble table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+  font-size: 0.88rem;
+}
+.assistantBubble th,
+.assistantBubble td {
+  border: 1px solid var(--wh-gray-200);
+  padding: 6px 10px;
+  text-align: left;
+}
+.assistantBubble th {
+  background: var(--wh-gray-200);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.assistantBubble tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* Strong / bold inside bubbles */
+.assistantBubble strong {
+  font-weight: 600;
 }
 
 .streaming::after {

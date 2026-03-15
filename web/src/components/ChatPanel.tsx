@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useChatStore } from '../stores/chatStore';
 import { createChat, streamMessage } from '../api';
 import type { Citation } from '../api';
@@ -11,9 +12,12 @@ interface Props {
   compact?: boolean;
 }
 
-/** Strip Foundry citation markers like 【7:2†source】 */
+/** Strip Foundry citation markers (various bracket styles + bare patterns) */
 const stripCitations = (text: string) =>
-  text.replace(/【[^】]*】/g, '');
+  text
+    .replace(/[\u3010\u3014\u300c\u300e\uff3b][^\u3011\u3015\u300d\u300f\uff3d]*[\u3011\u3015\u300d\u300f\uff3d]/g, '')
+    .replace(/\u2020?cite\d+[:\d]*\u2020?source[\w:\u2020]*/gi, '')
+    .replace(/[^\S\n]{2,}/g, ' ');
 
 export default function ChatPanel({ chatId: chatIdProp, compact }: Props) {
   const { activeChatId, newChat, addMessage, appendToMessage, setCitations } = useChatStore();
@@ -128,7 +132,7 @@ export default function ChatPanel({ chatId: chatIdProp, compact }: Props) {
               {msg.role === 'user' ? (
                 msg.content
               ) : (
-                <Markdown>{stripCitations(msg.content)}</Markdown>
+                <Markdown remarkPlugins={[remarkGfm]}>{stripCitations(msg.content)}</Markdown>
               )}
             </div>
 
