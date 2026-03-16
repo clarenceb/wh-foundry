@@ -22,11 +22,22 @@ from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPerm
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from opentelemetry import trace
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 # ── Config ─────────────────────────────────────────────────────────
 load_dotenv()
+
+# ── Tracing (must be before FastAPI app creation) ──────────────────
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+from tracing import configure_tracing, tracer  # noqa: E402
+
+configure_tracing()
+
+# Auto-instrument FastAPI (adds spans for every HTTP request)
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: E402
 
 PROJECT_ENDPOINT = os.environ["PROJECT_ENDPOINT"]
 AGENT_NAME = os.environ["AGENT_NAME"]
@@ -47,6 +58,7 @@ chats: dict[str, dict] = {}
 
 # ── FastAPI app ────────────────────────────────────────────────────
 app = FastAPI(title="Western Health Chat API")
+FastAPIInstrumentor.instrument_app(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -193,14 +205,17 @@ def _friendly_blob_title(url: str) -> str:
 @app.post("/api/chats", response_model=ChatCreateResponse)
 def create_chat():
     """Create a new chat session (Foundry conversation)."""
-    conversation = openai_client.conversations.create()
-    chat_id = str(uuid.uuid4())
-    chats[chat_id] = {
-        "foundry_id": conversation.id,
-        "title": "New Chat",
-        "messages": [],
-    }
-    return ChatCreateResponse(chat_id=chat_id, title="New Chat")
+    with tracer.start_as_current_span("create_chat_session") as span:
+        conversation = openai_client.conversations.create()
+        chat_id = str(uuid.uuid4())
+        span.set_attribute("chat.id", chat_id)
+        span.set_attribute("foundry.conversation_id", conversation.id)
+        chats[chat_id] = {
+            "foundry_id": conversation.id,
+            "title": "New Chat",
+            "messages": [],
+        }
+        return ChatCreateResponse(chat_id=chat_id, title="New Chat")
 
 
 @app.get("/api/chats", response_model=list[ChatSummary])
@@ -251,18 +266,29 @@ async def send_message(chat_id: str, req: MessageRequest):
 
     async def event_stream() -> AsyncGenerator[str, None]:
         full_text = ""
+        parent_span = tracer.start_span(
+            "agent_chat_turn",
+            attributes={
+                "chat.id": chat_id,
+                "foundry.conversation_id": foundry_id,
+                "user.message_length": len(req.message),
+            },
+        )
+        ctx = trace.set_span_in_context(parent_span)
         try:
-            stream = openai_client.responses.create(
-                conversation=foundry_id,
-                extra_body={
-                    "agent_reference": {
-                        "name": AGENT_NAME,
-                        "type": "agent_reference",
-                    }
-                },
-                input=req.message,
-                stream=True,
-            )
+            with tracer.start_as_current_span("foundry_agent_call", context=ctx) as call_span:
+                call_span.set_attribute("agent.name", AGENT_NAME)
+                stream = openai_client.responses.create(
+                    conversation=foundry_id,
+                    extra_body={
+                        "agent_reference": {
+                            "name": AGENT_NAME,
+                            "type": "agent_reference",
+                        }
+                    },
+                    input=req.message,
+                    stream=True,
+                )
             for event in stream:
                 # The responses API streams delta events
                 if hasattr(event, "type"):
@@ -290,19 +316,25 @@ async def send_message(chat_id: str, req: MessageRequest):
                                 print(f"[STREAM]   memory_search_call attrs={vars(oi) if hasattr(oi, '__dict__') else oi}")
 
                         # Extract citation annotations from the completed/incomplete response
-                        citations = _extract_citations(event)
-                        memories_used = _extract_memories_used(event)
+                        with tracer.start_as_current_span("extract_citations", context=ctx) as cit_span:
+                            citations = _extract_citations(event)
+                            cit_span.set_attribute("citations.count", len(citations))
 
-                        # If the agent triggered a memory_search_call but results weren't
-                        # populated yet (status=in_progress), fetch static memories that
-                        # were injected at conversation start. Only do this if the agent
-                        # actually invoked the memory tool (not for every response).
-                        has_memory_call = any(
-                            getattr(oi, "type", "") == "memory_search_call"
-                            for oi in output_items
-                        )
-                        if not memories_used and has_memory_call:
-                            memories_used = _get_static_memories()
+                        with tracer.start_as_current_span("extract_memories", context=ctx) as mem_span:
+                            memories_used = _extract_memories_used(event)
+
+                            # If the agent triggered a memory_search_call but results weren't
+                            # populated yet (status=in_progress), fetch static memories that
+                            # were injected at conversation start. Only do this if the agent
+                            # actually invoked the memory tool (not for every response).
+                            has_memory_call = any(
+                                getattr(oi, "type", "") == "memory_search_call"
+                                for oi in output_items
+                            )
+                            if not memories_used and has_memory_call:
+                                memories_used = _get_static_memories()
+                            mem_span.set_attribute("memories.count", len(memories_used))
+                            mem_span.set_attribute("memories.from_search_call", has_memory_call)
 
                         print(f"[STREAM] {event.type}: {len(citations)} citations, {len(memories_used)} memories used (memory_call={has_memory_call})")
                         if citations:
@@ -317,9 +349,15 @@ async def send_message(chat_id: str, req: MessageRequest):
             # Safety net: if stream ended without a terminal event, send done
             if full_text:
                 chat["messages"].append({"role": "assistant", "content": full_text})
+            parent_span.set_attribute("assistant.response_length", len(full_text))
+            parent_span.set_status(trace.StatusCode.OK)
+            parent_span.end()
             yield json.dumps({"type": "done"})
 
         except Exception as e:
+            parent_span.set_status(trace.StatusCode.ERROR, str(e))
+            parent_span.record_exception(e)
+            parent_span.end()
             yield json.dumps({"type": "error", "content": str(e)})
 
     return EventSourceResponse(event_stream())
@@ -336,26 +374,34 @@ def send_message_sync(chat_id: str, req: MessageRequest):
     chat = chats[chat_id]
     foundry_id = chat["foundry_id"]
 
-    chat["messages"].append({"role": "user", "content": req.message})
+    with tracer.start_as_current_span("agent_chat_turn_sync") as span:
+        span.set_attribute("chat.id", chat_id)
+        span.set_attribute("foundry.conversation_id", foundry_id)
+        span.set_attribute("user.message_length", len(req.message))
 
-    if chat["title"] == "New Chat" and len(chat["messages"]) == 1:
-        chat["title"] = req.message[:50] + ("..." if len(req.message) > 50 else "")
+        chat["messages"].append({"role": "user", "content": req.message})
 
-    response = openai_client.responses.create(
-        conversation=foundry_id,
-        extra_body={
-            "agent_reference": {
-                "name": AGENT_NAME,
-                "type": "agent_reference",
-            }
-        },
-        input=req.message,
-    )
+        if chat["title"] == "New Chat" and len(chat["messages"]) == 1:
+            chat["title"] = req.message[:50] + ("..." if len(req.message) > 50 else "")
 
-    assistant_text = response.output_text
-    chat["messages"].append({"role": "assistant", "content": assistant_text})
+        with tracer.start_as_current_span("foundry_agent_call") as call_span:
+            call_span.set_attribute("agent.name", AGENT_NAME)
+            response = openai_client.responses.create(
+                conversation=foundry_id,
+                extra_body={
+                    "agent_reference": {
+                        "name": AGENT_NAME,
+                        "type": "agent_reference",
+                    }
+                },
+                input=req.message,
+            )
 
-    return {"role": "assistant", "content": assistant_text}
+        assistant_text = response.output_text
+        span.set_attribute("assistant.response_length", len(assistant_text))
+        chat["messages"].append({"role": "assistant", "content": assistant_text})
+
+        return {"role": "assistant", "content": assistant_text}
 
 
 # ── Memory endpoints (Foundry Memory Store API) ──────────────────
@@ -363,18 +409,22 @@ def send_message_sync(chat_id: str, req: MessageRequest):
 @app.get("/api/memories", response_model=list[MemoryItem])
 def list_memories():
     """List all agent memories for the current scope via search_memories."""
-    try:
-        # Search with no items returns static/user-profile memories for the scope
-        search_response = project.beta.memory_stores.search_memories(
-            name=MEMORY_STORE_NAME,
-            scope=MEMORY_SCOPE,
-        )
-        return [
-            MemoryItem(id=m.memory_item.memory_id, content=m.memory_item.content)
-            for m in search_response.memories
-        ]
-    except Exception:
-        return []
+    with tracer.start_as_current_span("list_memories") as span:
+        span.set_attribute("memory.store", MEMORY_STORE_NAME)
+        span.set_attribute("memory.scope", MEMORY_SCOPE)
+        try:
+            search_response = project.beta.memory_stores.search_memories(
+                name=MEMORY_STORE_NAME,
+                scope=MEMORY_SCOPE,
+            )
+            memories = [
+                MemoryItem(id=m.memory_item.memory_id, content=m.memory_item.content)
+                for m in search_response.memories
+            ]
+            span.set_attribute("memory.count", len(memories))
+            return memories
+        except Exception:
+            return []
 
 
 @app.delete("/api/memories")

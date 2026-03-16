@@ -6,17 +6,21 @@ requires-python = ">=3.12"
 
 dependencies = [
     "azure-ai-projects>=2.0",
+    "azure-core-tracing-opentelemetry>=1.0.0b12",
     "azure-identity>=1.25",
+    "azure-monitor-opentelemetry-exporter>=1.0.0b48",
     "azure-storage-blob>=12.28",
     "beautifulsoup4>=4.14",
     "markdownify>=1.2",
+    "opentelemetry-instrumentation-fastapi>=0.60b0,<0.61b0",
+    "opentelemetry-sdk>=1.39,<1.40",
     "playwright>=1.58",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
 ]
 
 [tool.setuptools]
-py-modules = ["scrape_pages", "upload_docs", "chat"]
+py-modules = ["scrape_pages", "upload_docs", "chat", "tracing"]
 
 [project.scripts]
 scrape-pages = "scrape_pages:main"
