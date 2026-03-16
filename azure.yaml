@@ -12,6 +12,9 @@ hooks:
       continueOnError: false
 
 services: {}
+
+# before deploying the web app to App Service, ensure Entra ID authentication is set up
+# to protect the app and its data.  The userId for memories can be retrieved from the Entra ID token claims, and used as the MEMORY_SCOPE for the MemorySearchPreviewTool.
   # web:
   #   project: ./web
   #   language: ts
