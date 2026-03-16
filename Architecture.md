@@ -1,167 +1,266 @@
-# Architecture
+# Architecture — WH Foundry IQ Demo
 
 ## Overview
 
-The WH Foundry project is a demo platform that showcases **Microsoft Foundry IQ** with a knowledge base powered by **Azure AI Search**. It scrapes the Western Health website, indexes the content, and serves it through a Foundry agent that users interact with via a React web app.
+**WH Foundry** is an end-to-end demo application that combines Azure AI Foundry, Azure AI Search, and Azure Blob Storage to build a conversational AI assistant for **Western Health** patients and visitors. The assistant can answer questions about hospital services, locations, patient logistics, and more — grounded in a knowledge base of scraped web content.
+
+Key capabilities:
+
+- **Web scraping pipeline** — Playwright-based scraper converts hospital web pages into Markdown, uploads to Blob Storage, and indexes them via Azure AI Search with vector embeddings.
+- **Foundry agent with memory** — A hosted agent (via Azure AI Foundry) uses a knowledge base (MCP connection to AI Search), a **memory store** (for user preferences), and web search.
+- **React + FastAPI web app** — A full-featured chat UI with SSE streaming, source document viewing, memory management, and three route modes.
+- **Observability** — OpenTelemetry tracing exported to Application Insights for end-to-end visibility.
 
 ## High-Level Architecture
 
-![Architecture Diagram](./Architecture.png)
+![Architecture Diagram](Architecture.png)
 
-### Data Ingestion Pipeline
+## Data Ingestion Pipeline
 
-1. **Web Scraper** (`scrape_pages.py`) — Uses Playwright to fetch pages from the Western Health website, expands tabs/accordions, strips boilerplate, and converts to clean Markdown
-2. **Azure Blob Storage** (`whkbdocs/wh-kb-docs`) — Stores the Markdown files as the knowledge base source
-3. **Azure AI Search Indexer** — Runs daily, cracks documents, and feeds them through the skillset:
-   - **SplitSkill** — Chunks documents into 2000-character pages with 200-character overlap
-   - **AzureOpenAIEmbeddingSkill** — Generates 1536-dimensional vectors using `text-embedding-3-small`
-4. **Azure AI Search Index** (`wh-kb-docs-index`) — Stores chunks with vector embeddings, enabling hybrid (keyword + vector) search with semantic ranking
+```mermaid
+flowchart TD
+    A["🌐 Western Health Website"] -->|Playwright fetch & expand| B["🕷️ Web Scraper<br/><i>scrape_pages.py</i>"]
+    B -->|HTML → Markdown| C["📄 Markdown Files<br/><i>wh-kb-docs-md/</i>"]
+    C -->|upload_docs.py| D["☁️ Azure Blob Storage<br/><i>wh-kb-docs container</i>"]
+    D -->|Blob datasource| E["⚙️ AI Search Indexer<br/>+ Skillset"]
+    E -->|SplitSkill<br/>2000 chars / 200 overlap| F["🧩 Chunked Pages"]
+    F -->|AzureOpenAIEmbeddingSkill<br/>text-embedding-3-small| G["🔢 Vector Embeddings<br/><i>1536 dimensions</i>"]
+    G -->|Index projection| H["🔍 AI Search Index<br/><i>wh-kb-docs-index</i>"]
 
-### Agent & Chat
+    style A fill:#e1f5fe,stroke:#0277bd
+    style B fill:#f3e5f5,stroke:#6a1b9a
+    style C fill:#f3e5f5,stroke:#6a1b9a
+    style D fill:#fff8e1,stroke:#f57f17
+    style E fill:#fff3e0,stroke:#e65100
+    style F fill:#fff3e0,stroke:#e65100
+    style G fill:#fff3e0,stroke:#e65100
+    style H fill:#fff3e0,stroke:#e65100
+```
 
-5. **Microsoft Foundry Agent** (`wh-patient-helper`) — A prompt agent backed by the knowledge base, with memory enabled for personalization
-6. **Foundry Memory Store** — Persists user preferences and context across sessions (scoped per user via `{{$userId}}`)
-7. **FastAPI Backend** (`web/api/server.py`) — Bridges the React frontend to Foundry:
-   - Creates conversations, streams agent responses via SSE
-   - Generates time-limited SAS URLs for source document viewing
-   - Lists and clears agent memories
-8. **React Frontend** (`web/src/`) — Three modes:
-   - `/` — Full chat app with sidebar, chat history, memory panel
-   - `/widget` — Western Health landing page with floating chat bubble
-   - `/embed` — Standalone embeddable chat for iframe integration
+### 1. Web Scraping (`scrape_pages.py`)
+
+- Uses **Playwright** (headless Chromium) to fetch pages.
+- Expands collapsed sections, accordions, and tabs via JavaScript injection.
+- Strips navigation, headers, footers, and boilerplate via configurable CSS selectors (defined in `scrape-config.yaml`).
+- Converts cleaned HTML to **Markdown** using `markdownify` + `BeautifulSoup`.
+- Saves `.md` files locally to `wh-kb-docs-md/`.
+
+### 2. Upload to Blob Storage (`upload_docs.py`)
+
+- Uploads all `.md` files to Azure Blob Storage container `wh-kb-docs`.
+- Supports `--clean` mode (delete all existing blobs first) and `--dry-run`.
+- Uses `DefaultAzureCredential` for authentication.
+- Sets content type to `text/markdown; charset=utf-8`.
+
+### 3. AI Search Indexing
+
+The search index pipeline is configured via JSON definitions in `infra/search-config/`:
+
+| Component      | Name                     | Description |
+|----------------|--------------------------|-------------|
+| **Datasource** | `wh-kb-docs-datasource`  | Azure Blob datasource pointing at `wh-kb-docs` container (managed identity auth) |
+| **Skillset**   | `wh-kb-docs-skillset`    | Two skills: **SplitSkill** (chunk into 2000-char pages with 200-char overlap) → **AzureOpenAIEmbeddingSkill** (1536-dim vectors via `text-embedding-3-small`) |
+| **Index**      | `wh-kb-docs-index`       | Fields: `uid`, `snippet_parent_id`, `blob_url`, `snippet` (searchable text), `snippet_vector` (1536-dim vector) |
+| **Indexer**    | `wh-kb-docs-indexer`     | Connects datasource → skillset → index, daily schedule, maps `metadata_storage_path` → `blob_url` |
+
+## Agent & Chat
+
+### Foundry Agent (`setup_agent.py`)
+
+The agent **`wh-patient-helper`** is created via the Azure AI Projects SDK with three tools:
+
+| Tool | Type | Description |
+|------|------|-------------|
+| **Knowledge Base** | MCP connection | Connects to AI Search via a knowledge base endpoint; auto-approved for `knowledge_base_retrieve` |
+| **Memory Store** | `MemorySearchPreviewTool` | Searches/updates the memory store for user preferences (scoped per user) |
+| **Web Search** | `web_search_preview` | Supplementary web search for information not in the knowledge base |
+
+**Agent configuration:**
+
+- **Model:** `gpt-5.1` (configurable via `AGENT_MODEL`)
+- **Instructions:** Scoped to Western Health patient/visitor queries only
+- **Memory store:** `wh-patient-memory` with configurable update delay (10s demo / 300s production)
+
+### Memory Store (Microsoft Foundry)
+
+The memory store is a **Microsoft Foundry managed service** that persists user preferences and context across conversations. It is created and managed within the Foundry project.
+
+| Property | Value |
+|----------|-------|
+| **Name** | `wh-patient-memory` |
+| **Type** | `MemoryStoreDefaultDefinition` (Foundry-managed) |
+| **Chat model** | `gpt-5.1` (for summarization) |
+| **Embedding model** | `text-embedding-3-small` |
+| **Chat summary** | Enabled |
+| **User profile** | Enabled |
+| **Scope isolation** | Memories scoped per `MEMORY_SCOPE` value (e.g. `demo_user`) — each scope has independent memory |
+| **Update debounce** | Configurable delay (`MEMORY_UPDATE_DELAY`) before memory updates — 10s for demo, 300s for production |
+
+**Memory types:**
+
+- **User profile** — Location/suburb, preferred hospital, language, answer style (concise/detailed/dot points), medical context
+- **Chat summary** — Condensed summaries of past conversation turns
+
+**Scope isolation** ensures that different users (or demo sessions) have fully independent memories. The `delete_scope` API clears all memories for a given scope.
+
+**Management API** (exposed via FastAPI):
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/memories` | `GET` | List all memories for the current scope |
+| `/api/memories` | `DELETE` | Delete all memories for the current scope |
+
+### Conversations API
+
+The Foundry agent uses the **Conversations API** (`openai_client.conversations.create()` / `openai_client.responses.create()`) which provides:
+
+- Persistent conversation threads (server-managed)
+- Streaming responses via the Responses API
+- Automatic tool invocation (knowledge base, memory, web search)
+
+## Web Application
+
+### Backend — FastAPI (`web/api/server.py`)
+
+| Feature | Implementation |
+|---------|----------------|
+| **Framework** | FastAPI with Uvicorn |
+| **Streaming** | SSE via `sse-starlette` — streams `delta`, `citations`, `memories_used`, and `done` events |
+| **Chat management** | In-memory dict mapping `chat_id` → Foundry `conversation_id` + local message history |
+| **Source viewer** | Generates user-delegation SAS URLs for blob storage documents (requires `Storage Blob Delegator` + `Storage Blob Data Contributor` roles) |
+| **Memory endpoints** | Proxies Foundry Memory Store `search_memories` and `delete_scope` APIs |
+| **Tracing** | OpenTelemetry spans for every HTTP request + agent call, exported to Application Insights |
+| **CORS** | Wide-open (`*`) for local development |
+
+**Key endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `POST /api/chats` | POST | Create a new chat (Foundry conversation) |
+| `GET /api/chats` | GET | List all chats |
+| `GET /api/chats/{id}/messages` | GET | Get messages for a chat |
+| `DELETE /api/chats/{id}` | DELETE | Delete a chat |
+| `POST /api/chats/{id}/messages` | POST | Send message + stream response (SSE) |
+| `POST /api/chats/{id}/messages/sync` | POST | Send message, get full response (non-streaming) |
+| `GET /api/memories` | GET | List memories |
+| `DELETE /api/memories` | DELETE | Clear all memories |
+| `GET /api/source?url=...` | GET | Fetch source document content via SAS proxy |
+| `GET /api/health` | GET | Health check |
+
+### Frontend — React + TypeScript (`web/src/`)
+
+| Aspect | Details |
+|--------|---------|
+| **Framework** | React 19 + TypeScript |
+| **Build tool** | Vite 8 |
+| **State management** | Zustand (two stores: `chatStore`, `memoryStore`) |
+| **Routing** | React Router v7 with three modes |
+| **Markdown rendering** | `react-markdown` + `remark-gfm` |
+| **Styling** | CSS Modules |
+
+**Route modes:**
+
+| Route | Page | Description |
+|-------|------|-------------|
+| `/` | `FullAppPage` | Full-featured chat app with sidebar, memory panel, and source viewer |
+| `/widget` | `WidgetPage` | Floating chat widget (embeddable bubble) |
+| `/embed` | `EmbedPage` | Minimal iframe-embeddable chat panel |
+
+**Components:**
+
+| Component | Purpose |
+|-----------|---------|
+| `Sidebar` | Chat list, new chat button, chat deletion |
+| `ChatPanel` | Main chat interface — message input, streaming display, citation links |
+| `MemoryPanel` | View and clear agent memories |
+| `SourceModal` | Modal viewer for source documents (fetched via SAS proxy) |
+| `ChatWidget` | Floating bubble widget for widget/embed modes |
 
 ## Azure Services
 
-| Service | Purpose | SKU |
-| --- | --- | --- |
-| **Azure Blob Storage** | Knowledge base document store | Standard_ZRS, Hot |
-| **Azure AI Search** | Vector + semantic search over documents | Basic |
-| **Azure AI Services (Foundry)** | LLM inference, agent hosting, memory | S0 |
-| **Foundry Project** | Agent workspace with connected resources | — |
-| **Application Insights** | Trace collection and observability | Workspace-based |
-| **Log Analytics** | Telemetry storage for Application Insights | PerGB2018 |
+| Service | Resource | SKU | Purpose |
+|---------|----------|-----|---------|
+| **Azure Storage** | Storage Account | Standard_ZRS | Blob storage for knowledge base documents (`wh-kb-docs` container) |
+| **Azure AI Search** | Search Service | Basic | Vector + semantic search index for knowledge base grounding |
+| **Azure AI Services (Foundry)** | Cognitive Services Account | S0 | AI model hosting, agent runtime, memory store, project management |
+| **Azure AI Foundry Project** | Project (`mydemos`) | S0 | Foundry project connecting AI Services + AI Search |
+| **Application Insights** | App Insights + Log Analytics | PerGB2018 | OpenTelemetry trace collection and agent observability |
 
-### Model Deployments
+## Model Deployments
 
-| Deployment | Model | SKU | Purpose |
-| --- | --- | --- | --- |
-| `text-embedding-3-small` | text-embedding-3-small | Standard (120 TPM) | Document + query embeddings |
-| `gpt-4.1` | gpt-4.1 | GlobalStandard (50 TPM) | Agent reasoning |
-| `gpt-5.1` | gpt-5.1 | GlobalStandard (120 TPM) | Agent reasoning |
-| `gpt-5.2` | gpt-5.2 | GlobalStandard (150 TPM) | Agent reasoning (primary) |
+| Model | Deployment Name | SKU | Capacity | Purpose |
+|-------|----------------|-----|----------|---------|
+| `text-embedding-3-small` | `text-embedding-3-small` | Standard | 120 | Embeddings for AI Search skillset + memory store |
+| `gpt-4.1` | `gpt-4.1` | GlobalStandard | 50 | Chat model (alternative) |
+| `gpt-5.1` | `gpt-5.1` | GlobalStandard | 120 | Primary agent chat model + memory summarization |
+| `gpt-5.2` | `gpt-5.2` | GlobalStandard | 150 | Chat model (latest) |
 
-### Role Assignments (RBAC)
+## RBAC Role Assignments
 
-| From | To | Role | Why |
-| --- | --- | --- | --- |
-| AI Search (managed identity) | Storage Account | Storage Blob Data Reader | Indexer reads markdown blobs |
-| AI Search (managed identity) | AI Services | Cognitive Services User | Skillset calls embedding model |
-| Current User | Storage Account | Storage Blob Data Contributor | Upload/manage documents |
-| Current User | Storage Account | Storage Blob Delegator | Generate user delegation SAS tokens for source viewing |
-| Current User | AI Services | Cognitive Services User | Call models, manage agents |
-| AI Services (managed identity) | AI Services (self) | Cognitive Services User | Memory store calls embedding model for vectorizing memories |
-| Foundry Project (managed identity) | AI Services | Azure AI User | Memory store authenticates to call chat + embedding models |
-
-## Tracing / Observability
-
-The application uses **OpenTelemetry** with the **Azure Monitor exporter** to send traces to **Application Insights**, which are then surfaced in the **Foundry portal → Observability → Traces**.
-
-### Tracing flow
-
-1. A shared tracing module ([tracing.py](tracing.py)) configures the OpenTelemetry `TracerProvider` at startup
-2. If `APPLICATION_INSIGHTS_CONNECTION_STRING` is set, traces are exported to Azure Monitor; otherwise they print to the console
-3. `azure-core-tracing-opentelemetry` is enabled so all Azure SDK calls (Foundry, Storage) are automatically instrumented
-4. FastAPI is auto-instrumented via `opentelemetry-instrumentation-fastapi` — every HTTP request gets a span
-
-### Instrumented spans
-
-| Span | Location | What it captures |
-| --- | --- | --- |
-| `create_chat_session` | `POST /api/chats` | New Foundry conversation creation with IDs |
-| `agent_chat_turn` | `POST /api/chats/{id}/messages` | Full chat turn: user message → agent response |
-| `foundry_agent_call` | nested in above | The actual Foundry agent API call |
-| `extract_citations` | nested in above | Citation extraction with count |
-| `extract_memories` | nested in above | Memory lookup with count and source |
-| `agent_chat_turn_sync` | `POST .../messages/sync` | Same as above for non-streaming path |
-| `list_memories` | `GET /api/memories` | Memory store queries |
-| `create_conversation` | CLI `chat.py` | CLI conversation creation |
-| `agent_chat_turn` | CLI `chat.py` | Each CLI chat turn |
-
-### Infrastructure
-
-- **Log Analytics workspace** — Stores raw telemetry data (90-day retention)
-- **Application Insights** — Workspace-based, connected to Log Analytics, provides trace visualization
-- Both are provisioned via Bicep ([infra/modules/app-insights.bicep](infra/modules/app-insights.bicep))
-
-### Packages
-
-| Package | Purpose |
-| --- | --- |
-| `opentelemetry-sdk` | Core OpenTelemetry tracing SDK |
-| `azure-monitor-opentelemetry-exporter` | Exports spans to Application Insights |
-| `azure-core-tracing-opentelemetry` | Auto-instruments Azure SDK calls |
-| `opentelemetry-instrumentation-fastapi` | Auto-instruments FastAPI HTTP requests |
-
-## Memory Store
-
-The Foundry agent uses the **Memory Store** (preview) to persist user preferences, context, and demographics across chat sessions.
-
-### How it works
-
-1. The agent has a `memory_search_preview` tool attached, configured with a **memory store name** and **scope**
-2. **Scope** determines memory isolation — set to `{{$userId}}` which resolves to `{tenantId}_{objectId}` from the authentication token, giving each user their own private memory partition
-3. During a conversation, the agent automatically extracts memorable information (preferences, location, formatting style) from the chat
-4. Memory updates are **debounced** by `update_delay` (set to 10 seconds for this demo; use 300 seconds / 5 minutes in production)
-5. At the start of each new conversation, **static memories** (user profile) are injected so the agent has immediate context
-6. Per-turn, **contextual memories** are retrieved via semantic search to inform each response
-
-### Memory types
-
-- **User profile** — Long-term facts about the user (e.g. "Lives in Footscray", "Prefers concise answers")
-- **Chat summary** — Compressed summaries of past conversations for continuity
-
-### Management
-
-- **List memories** — `GET /api/memories` calls `search_memories()` with scope only (no items) to retrieve static memories
-- **Clear scope** — `DELETE /api/memories` calls `delete_scope()` to remove all memories for the current user
-- Individual memory deletion is not supported by the Foundry API
-
-## Source Document Viewing (SAS URLs)
-
-When the agent cites a knowledge base document, the citation links point to Azure Blob Storage. Since the storage account has public access disabled, the backend generates **user delegation SAS tokens** with a 15-minute expiry.
-
-This requires:
-- **Storage Blob Data Contributor** — to read blobs
-- **Storage Blob Delegator** — to call `get_user_delegation_key()` and sign SAS tokens without storage account keys
+| Source Principal | Target Resource | Role | Purpose |
+|-----------------|-----------------|------|---------|
+| AI Search (managed identity) | Storage Account | **Storage Blob Data Reader** | Indexer reads blobs from storage |
+| AI Search (managed identity) | AI Services Account | **Cognitive Services User** | Indexer calls embedding model |
+| Current User | Storage Account | **Storage Blob Data Contributor** | Upload/manage documents |
+| Current User | Storage Account | **Storage Blob Delegator** | Generate user-delegation SAS URLs for source viewer |
+| Current User | AI Services Account | **Cognitive Services User** | Call AI models, manage agents |
+| AI Services (self — system identity) | AI Services Account | **Cognitive Services User** | Memory store calls embedding model on the same account |
+| Project (managed identity) | AI Services Account | **Cognitive Services User** | Memory store authenticates and calls models (chat + embedding) |
 
 ## Search Index Configuration
 
-- **Algorithm**: HNSW (cosine metric, m=4, efConstruction=400, efSearch=500)
-- **Compression**: Scalar quantization (int8) with rescoring enabled (4x oversampling)
-- **Vectorizer**: Integrated `text-embedding-3-small` for query-time vectorization
-- **Semantic**: BM25 similarity with semantic reranking on the `snippet` field
-- **Projection mode**: `skipIndexingParentDocuments` — only chunk-level documents are indexed
+| Setting | Value |
+|---------|-------|
+| **Vector algorithm** | HNSW (`m=4`, `efConstruction=400`, `efSearch=500`, `cosine` metric) |
+| **Compression** | Scalar quantization (`int8`) with rescoring enabled (oversampling=4, preserveOriginals) |
+| **Vectorizer** | Azure OpenAI (`text-embedding-3-small`, 1536 dimensions) |
+| **Semantic config** | `wh-kb-docs-semantic-configuration` — prioritized content field: `snippet` |
+| **Index projection** | `skipIndexingParentDocuments` — only child chunks are indexed |
+| **Chunking** | SplitSkill — 2000 chars/page, 200 chars overlap |
 
-## Web App Stack
+## Source Document Viewing
 
-| Layer | Technology |
-| --- | --- |
-| Backend | Python, FastAPI, Uvicorn, SSE |
-| Frontend | React, TypeScript, Vite |
-| State | Zustand |
-| Styling | CSS Modules (WH teal palette) |
-| Auth | DefaultAzureCredential (Azure CLI) |
-| Routing | React Router (`/`, `/widget`, `/embed`) |
+The chat UI includes a **source viewer** that lets users inspect the original documents cited by the agent:
+
+1. Agent response includes citation URLs pointing to Azure Blob Storage.
+2. Frontend sends the blob URL to `GET /api/source?url=...`.
+3. Backend generates a **user-delegation SAS URL** (time-limited, read-only, 5-minute expiry).
+4. Backend fetches the document content via the SAS URL and returns it to the frontend.
+5. Frontend renders the Markdown content in a `SourceModal`.
+
+**Required roles** for SAS URL generation:
+- `Storage Blob Data Contributor` — read access to blobs
+- `Storage Blob Delegator` — permission to create user-delegation keys
+
+## Web Application Stack
+
+| Layer | Technology | Details |
+|-------|-----------|---------|
+| **Backend** | FastAPI + Uvicorn | Python 3, SSE streaming via `sse-starlette` |
+| **Frontend** | React 19 + TypeScript | Vite 8 build, CSS Modules |
+| **State** | Zustand | Two stores: `chatStore` (chats/messages), `memoryStore` (agent memories) |
+| **Styling** | CSS Modules | Per-component `.module.css` files |
+| **Auth** | `DefaultAzureCredential` | Backend authenticates to all Azure services via managed identity / CLI |
+| **Routing** | React Router v7 | Three modes: full app (`/`), widget (`/widget`), embed (`/embed`) |
+| **Observability** | OpenTelemetry | Auto-instrumented FastAPI + manual spans, Azure Monitor exporter |
+
+## Observability
+
+- **Tracing** is configured in `tracing.py` using OpenTelemetry SDK.
+- Traces export to **Application Insights** when `APPLICATION_INSIGHTS_CONNECTION_STRING` is set; otherwise traces go to console.
+- FastAPI is auto-instrumented with `opentelemetry-instrumentation-fastapi`.
+- Custom spans track: chat session creation, agent calls, citation extraction, memory operations.
+- Azure SDK tracing is enabled via `azure-core-tracing-opentelemetry`.
 
 ## Resources
 
-- [Microsoft Foundry documentation](https://learn.microsoft.com/azure/foundry/)
-- [Foundry Agent Service](https://learn.microsoft.com/azure/foundry/agents/)
-- [Memory in Foundry Agent Service (preview)](https://learn.microsoft.com/azure/foundry/agents/how-to/memory-usage)
-- [Azure AI Search — vector search](https://learn.microsoft.com/azure/search/vector-search-overview)
-- [Azure AI Search — integrated vectorization](https://learn.microsoft.com/azure/search/vector-search-integrated-vectorization)
-- [Azure AI Search — semantic ranking](https://learn.microsoft.com/azure/search/semantic-search-overview)
-- [Connect to Azure Storage using a managed identity](https://learn.microsoft.com/azure/search/search-howto-managed-identities-storage)
-- [Azure OpenAI Embedding Skill](https://learn.microsoft.com/azure/search/cognitive-search-skill-azure-openai-embedding)
-- [User delegation SAS tokens](https://learn.microsoft.com/azure/storage/blobs/storage-blob-user-delegation-sas-create-python)
-- [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/)
+- [Azure AI Foundry documentation](https://learn.microsoft.com/azure/ai-studio/)
+- [Azure AI Projects SDK (Python)](https://learn.microsoft.com/python/api/overview/azure/ai-projects-readme)
+- [Azure AI Search — Vector search](https://learn.microsoft.com/azure/search/vector-search-overview)
+- [Azure AI Search — Integrated vectorization](https://learn.microsoft.com/azure/search/vector-search-integrated-vectorization)
+- [Azure AI Search — Semantic ranking](https://learn.microsoft.com/azure/search/semantic-search-overview)
+- [Azure Blob Storage — User delegation SAS](https://learn.microsoft.com/azure/storage/blobs/storage-blob-user-delegation-sas-create-cli)
+- [Azure AI Foundry — Memory Store](https://learn.microsoft.com/azure/ai-foundry/concepts/memory)
+- [OpenTelemetry Python SDK](https://opentelemetry.io/docs/languages/python/)
+- [FastAPI documentation](https://fastapi.tiangolo.com/)
+- [Zustand state management](https://zustand.docs.pmnd.rs/)
