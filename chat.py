@@ -14,9 +14,14 @@ import os
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
+from opentelemetry import trace
 
 # ── Load config from .env ──────────────────────────────────────────
 load_dotenv()
+
+# ── Tracing ───────────────────────────────────────────────────────
+from tracing import configure_tracing, tracer
+configure_tracing()
 
 PROJECT_ENDPOINT = os.environ["PROJECT_ENDPOINT"]
 AGENT_NAME = os.environ["AGENT_NAME"]
@@ -29,7 +34,9 @@ project = AIProjectClient(
 openai = project.get_openai_client()
 
 # ── Start a conversation ───────────────────────────────────────────
-conversation = openai.conversations.create()
+with tracer.start_as_current_span("create_conversation") as span:
+    conversation = openai.conversations.create()
+    span.set_attribute("foundry.conversation_id", conversation.id)
 
 GREEN = "\033[32m"
 BOLD = "\033[1m"
@@ -64,15 +71,21 @@ while True:
         break
 
     # Send the question to the Foundry agent
-    response = openai.responses.create(
-        conversation=conversation.id,
-        extra_body={
-            "agent_reference": {
-                "name": AGENT_NAME,
-                "type": "agent_reference",
-            }
-        },
-        input=user_input,
-    )
+    with tracer.start_as_current_span("agent_chat_turn") as span:
+        span.set_attribute("user.message_length", len(user_input))
+        span.set_attribute("agent.name", AGENT_NAME)
+
+        response = openai.responses.create(
+            conversation=conversation.id,
+            extra_body={
+                "agent_reference": {
+                    "name": AGENT_NAME,
+                    "type": "agent_reference",
+                }
+            },
+            input=user_input,
+        )
+
+        span.set_attribute("assistant.response_length", len(response.output_text))
 
     print(f"\nAssistant: {response.output_text}\n")

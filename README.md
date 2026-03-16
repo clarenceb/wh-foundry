@@ -66,6 +66,37 @@ MEMORY_SCOPE={tenantId}_{objectId}
 STORAGE_ACCOUNT_NAME=whkbdocs
 ```
 
+#### Setting `APPLICATION_INSIGHTS_CONNECTION_STRING`
+
+Tracing exports OpenTelemetry spans to Azure Application Insights so they appear in the **Foundry portal → Observability → Traces**.
+
+If you provisioned infrastructure with `azd provision`, the Application Insights resource is created automatically. Get the connection string with:
+
+```bash
+# Option 1: From azd outputs
+azd env get-values | grep AZURE_APP_INSIGHTS_CONNECTION_STRING
+
+# Option 2: From Azure CLI (replace names with your own)
+az monitor app-insights component show \
+  --app <app-insights-name> \
+  --resource-group <resource-group-name> \
+  --query connectionString -o tsv
+
+# Option 3: Quick one-liner using resource group from azd
+RG=$(azd env get-values | grep AZURE_RESOURCE_GROUP | cut -d'=' -f2 | tr -d '"')
+az monitor app-insights component list -g "$RG" --query '[0].connectionString' -o tsv
+```
+
+Add it to your `.env`:
+
+```dotenv
+APPLICATION_INSIGHTS_CONNECTION_STRING=InstrumentationKey=...;IngestionEndpoint=...;LiveEndpoint=...
+```
+
+If not set, traces are printed to the console (useful for local debugging).
+
+> **Tip:** After running the agent, wait 2–5 minutes for traces to appear in the Foundry portal under **Observability → Traces**.
+
 #### Setting `MEMORY_SCOPE`
 
 The agent's memory tool uses `{{$userId}}` as the scope, which resolves to `{tenantId}_{objectId}` from the request auth token. The backend needs the same scope to list and clear memories.

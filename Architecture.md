@@ -6,7 +6,7 @@ The WH Foundry project is a demo platform that showcases **Microsoft Foundry IQ*
 
 ## High-Level Architecture
 
-![Architecture Diagram](wh-images/architecture.drawio)
+![Architecture Diagram](./Architecture.png)
 
 ### Data Ingestion Pipeline
 
@@ -38,6 +38,8 @@ The WH Foundry project is a demo platform that showcases **Microsoft Foundry IQ*
 | **Azure AI Search** | Vector + semantic search over documents | Basic |
 | **Azure AI Services (Foundry)** | LLM inference, agent hosting, memory | S0 |
 | **Foundry Project** | Agent workspace with connected resources | — |
+| **Application Insights** | Trace collection and observability | Workspace-based |
+| **Log Analytics** | Telemetry storage for Application Insights | PerGB2018 |
 
 ### Model Deployments
 
@@ -59,6 +61,46 @@ The WH Foundry project is a demo platform that showcases **Microsoft Foundry IQ*
 | Current User | AI Services | Cognitive Services User | Call models, manage agents |
 | AI Services (managed identity) | AI Services (self) | Cognitive Services User | Memory store calls embedding model for vectorizing memories |
 | Foundry Project (managed identity) | AI Services | Azure AI User | Memory store authenticates to call chat + embedding models |
+
+## Tracing / Observability
+
+The application uses **OpenTelemetry** with the **Azure Monitor exporter** to send traces to **Application Insights**, which are then surfaced in the **Foundry portal → Observability → Traces**.
+
+### Tracing flow
+
+1. A shared tracing module ([tracing.py](tracing.py)) configures the OpenTelemetry `TracerProvider` at startup
+2. If `APPLICATION_INSIGHTS_CONNECTION_STRING` is set, traces are exported to Azure Monitor; otherwise they print to the console
+3. `azure-core-tracing-opentelemetry` is enabled so all Azure SDK calls (Foundry, Storage) are automatically instrumented
+4. FastAPI is auto-instrumented via `opentelemetry-instrumentation-fastapi` — every HTTP request gets a span
+
+### Instrumented spans
+
+| Span | Location | What it captures |
+| --- | --- | --- |
+| `create_chat_session` | `POST /api/chats` | New Foundry conversation creation with IDs |
+| `agent_chat_turn` | `POST /api/chats/{id}/messages` | Full chat turn: user message → agent response |
+| `foundry_agent_call` | nested in above | The actual Foundry agent API call |
+| `extract_citations` | nested in above | Citation extraction with count |
+| `extract_memories` | nested in above | Memory lookup with count and source |
+| `agent_chat_turn_sync` | `POST .../messages/sync` | Same as above for non-streaming path |
+| `list_memories` | `GET /api/memories` | Memory store queries |
+| `create_conversation` | CLI `chat.py` | CLI conversation creation |
+| `agent_chat_turn` | CLI `chat.py` | Each CLI chat turn |
+
+### Infrastructure
+
+- **Log Analytics workspace** — Stores raw telemetry data (90-day retention)
+- **Application Insights** — Workspace-based, connected to Log Analytics, provides trace visualization
+- Both are provisioned via Bicep ([infra/modules/app-insights.bicep](infra/modules/app-insights.bicep))
+
+### Packages
+
+| Package | Purpose |
+| --- | --- |
+| `opentelemetry-sdk` | Core OpenTelemetry tracing SDK |
+| `azure-monitor-opentelemetry-exporter` | Exports spans to Application Insights |
+| `azure-core-tracing-opentelemetry` | Auto-instruments Azure SDK calls |
+| `opentelemetry-instrumentation-fastapi` | Auto-instruments FastAPI HTTP requests |
 
 ## Memory Store
 

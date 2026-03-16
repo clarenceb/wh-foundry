@@ -21,6 +21,9 @@ param searchServiceName string = ''
 @description('Name of the AI Services / Foundry account')
 param aiServicesAccountName string = ''
 
+@description('Name of the Application Insights resource')
+param appInsightsName string = ''
+
 @description('Name of the Foundry project')
 param projectName string = 'mydemos'
 
@@ -56,6 +59,18 @@ module search './modules/search.bicep' = {
   scope: rg
   params: {
     name: !empty(searchServiceName) ? searchServiceName : '${abbrs.searchSearchServices}${resourceToken}'
+    location: location
+    tags: tags
+  }
+}
+
+// Application Insights + Log Analytics (for agent tracing / observability)
+module appInsights './modules/app-insights.bicep' = {
+  name: 'app-insights'
+  scope: rg
+  params: {
+    appInsightsName: !empty(appInsightsName) ? appInsightsName : '${abbrs.insightsComponents}${resourceToken}'
+    logAnalyticsName: '${abbrs.operationalInsightsWorkspaces}${resourceToken}'
     location: location
     tags: tags
   }
@@ -174,3 +189,5 @@ output AZURE_SEARCH_ENDPOINT string = search.outputs.endpoint
 output AZURE_AI_SERVICES_ACCOUNT_NAME string = aiServices.outputs.accountName
 output AZURE_AI_SERVICES_ENDPOINT string = aiServices.outputs.endpoint
 output AZURE_AI_PROJECT_NAME string = aiServices.outputs.projectName
+output AZURE_APP_INSIGHTS_NAME string = appInsights.outputs.id
+output AZURE_APP_INSIGHTS_CONNECTION_STRING string = appInsights.outputs.connectionString
