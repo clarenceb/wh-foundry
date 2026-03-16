@@ -3,3 +3,4 @@ generate_diagram.py
 *.pyc
 __pycache__/
 wh_foundry.egg-info/
+tracing-samples.txt
